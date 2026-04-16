@@ -21,7 +21,7 @@ struct SharedData
 };
 
 // Global instance
-extern SharedData* mySharedData;
+extern SharedData* projectSharedData;
 
 // Function to initialize global data
 void initGlobalData();
