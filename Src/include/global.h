@@ -7,16 +7,23 @@
 #include "freertos/task.h"
 
 // Struct for Shared Variables
-struct SensorData 
+struct SharedData
 {
     float temperature;
     float humidity;
     
     SemaphoreHandle_t mutex;
+    SemaphoreHandle_t i2cMutex;
     
     SemaphoreHandle_t semNormal;
     SemaphoreHandle_t semWarning;
     SemaphoreHandle_t semCritical;
 };
+
+// Global instance
+extern SharedData* mySharedData;
+
+// Function to initialize global data
+void initGlobalData();
 
 #endif
