@@ -8,6 +8,6 @@
 #define SDA_PIN 11
 #define SCL_PIN 12
 
-void tem_humi(void *pvParameters);
+void temp_humi(void *pvParameters);
 
 #endif
