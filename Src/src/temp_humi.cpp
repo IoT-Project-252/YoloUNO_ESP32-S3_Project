@@ -56,27 +56,30 @@ void temp_humi(void *pvParameters)
             sharedData->temperature = t;
             sharedData->humidity = h;
             xSemaphoreGive(sharedData->mutex);
+
+            Serial.printf("Temperature: %.2f°C | Humidity: %.2f%%\n", t, h);
         }
 
         // THRESHOLD LOGIC: Trigger the appropriate state semaphore based on the temperature
-        if (t < 30.0) 
+        if (t >= 20 && t < 30) 
         {
-            // Normal state: Temperature < 30.0 °C
+            // Normal state
             xSemaphoreGive(sharedData->semNormal);
+            Serial.println("Normal");
         } 
-        else if (t >= 30.0 && t < 38.0) 
+        else if ((t >= 30.0 && t < 38.0) || (t >= 7 && t < 20))
         {
-            // Warning state: 30.0 °C <= Temperature < 38.0 °C
+            // Warning state
             xSemaphoreGive(sharedData->semWarning);
+            Serial.println("Warning");
         } 
         else 
         {
-            // Critical state: Temperature >= 38.0 °C
+            // Critical state
             xSemaphoreGive(sharedData->semCritical);
+            Serial.println("Critical");
         }
 
-        // Block the task for 5000ms (5 seconds) before the next sampling cycle
-        // This yields the CPU to other tasks and matches the slow polling rate of DHT sensors
         vTaskDelay(pdMS_TO_TICKS(5000)); 
     }
 }
