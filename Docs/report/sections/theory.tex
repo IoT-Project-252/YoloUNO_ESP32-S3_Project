@@ -1,0 +1,324 @@
+﻿\newpage
+\section{Cơ sở lý thuyết}
+
+Chương này trình bày nền tảng học thuật và kỹ thuật được sử dụng để thiết kế hệ thống IoT thời gian thực trên ESP32-S3. Trọng tâm là các khái niệm phục vụ trực tiếp cho 6 task của đề tài: lập lịch đa nhiệm với FreeRTOS, giao tiếp cảm biến I2C, điều khiển ngoại vi bằng PWM, thiết kế web server ở chế độ Access Point, triển khai TinyML tại biên và truyền dữ liệu lên nền tảng đám mây bằng MQTT.
+
+\subsection{Hệ điều hành thời gian thực (RTOS) và FreeRTOS}
+
+\subsubsection{Khái niệm RTOS và khác biệt với hệ điều hành thông thường}
+
+RTOS (Real-Time Operating System) là hệ điều hành được thiết kế để đảm bảo các tác vụ quan trọng được thực thi trong một khoảng thời gian có thể dự đoán trước\footnote{FreeRTOS Documentation -- Real-time kernel overview: \url{https://www.freertos.org/Documentation/00-Overview}}. Khác với hệ điều hành máy tính cá nhân tối ưu cho thông lượng tổng thể, RTOS ưu tiên tính xác định (determinism), độ trễ thấp và khả năng đáp ứng sự kiện theo ràng buộc thời gian.
+
+Trong bối cảnh IoT nhúng, nhiều nhiệm vụ xảy ra đồng thời: đọc cảm biến định kỳ, cập nhật giao diện hiển thị, điều khiển cơ cấu chấp hành, xử lý kết nối mạng và truyền dữ liệu lên cloud. Nếu toàn bộ logic được viết kiểu tuần tự trong một vòng lặp lớn, hệ thống dễ bị chặn (blocking), gây trễ phản hồi hoặc mất dữ liệu. RTOS giải quyết vấn đề này bằng cách phân rã chương trình thành nhiều task chạy song song theo mức ưu tiên.
+
+\subsubsection{Các thành phần cốt lõi của FreeRTOS}
+
+FreeRTOS là RTOS mã nguồn mở phổ biến trong hệ sinh thái vi điều khiển, hỗ trợ đầy đủ các nguyên ngữ đồng bộ cần thiết cho hệ đa nhiệm\footnote{FreeRTOS Kernel Book (official): \url{https://www.freertos.org/Documentation/02-Kernel/07-Books-and-manual/01-RTOS_book}}:
+
+\begin{itemize}
+    \item \textbf{Task}: đơn vị thực thi cơ bản, mỗi task có stack riêng, trạng thái riêng và độ ưu tiên riêng.
+    \item \textbf{Scheduler}: bộ lập lịch quyết định task nào được CPU phục vụ tại từng thời điểm.
+    \item \textbf{Queue}: hàng đợi truyền thông điệp giữa các task theo cơ chế FIFO, giúp tách biệt producer và consumer.
+    \item \textbf{Semaphore}: tín hiệu đồng bộ giữa các task hoặc giữa ngắt và task.
+    \item \textbf{Mutex}: khóa loại trừ lẫn nhau nhằm bảo vệ tài nguyên chia sẻ khỏi truy cập đồng thời.
+    \item \textbf{Software Timer}: bộ định thời mức phần mềm, dùng cho các tác vụ chu kỳ không cần tạo task riêng.
+\end{itemize}
+
+Về trạng thái task, FreeRTOS thường bao gồm: Running, Ready, Blocked, Suspended. Khi task gọi \texttt{vTaskDelay()} hoặc chờ semaphore/queue với timeout, task chuyển sang Blocked để nhường CPU, từ đó tăng hiệu quả hệ thống.
+
+\subsubsection{Cơ chế lập lịch và tiền nhiệm (preemption)}
+
+Trong cấu hình preemptive, khi có task ưu tiên cao hơn trở nên sẵn sàng, scheduler sẽ ngắt task hiện tại để chuyển CPU cho task mới. Cơ chế này đặc biệt phù hợp với ứng dụng có sự kiện khẩn như cảnh báo nhiệt độ nguy hiểm, mất kết nối mạng hoặc yêu cầu điều khiển tức thời từ giao diện web.
+
+Đối với các task cùng mức ưu tiên, scheduler dùng cơ chế time-slicing để chia thời gian xử lý công bằng. Nhờ vậy, hệ thống vẫn duy trì tính phản hồi ngay cả khi nhiều module hoạt động đồng thời.
+
+\subsubsection{Semaphore và Mutex: vai trò trong hệ đa task}
+
+\paragraph{Binary Semaphore}
+Binary semaphore có hai trạng thái logic (0/1), thường dùng để báo hiệu sự kiện. Ví dụ: task đọc cảm biến phát tín hiệu cho task hiển thị rằng dữ liệu mới đã sẵn sàng.
+
+\paragraph{Counting Semaphore}
+Counting semaphore mở rộng binary semaphore bằng bộ đếm, phù hợp cho bài toán quản lý số lượng tài nguyên giống nhau hoặc đếm số sự kiện chưa xử lý.
+
+\paragraph{Mutex}
+Mutex được dùng khi cần độc quyền truy cập một tài nguyên chia sẻ như bus I2C hoặc biến trạng thái toàn cục. FreeRTOS mutex có cơ chế \textit{priority inheritance} giúp giảm rủi ro \textit{priority inversion} (task ưu tiên cao phải chờ task ưu tiên thấp giữ khóa)\footnote{FreeRTOS API Reference -- Semaphores/Mutexes: \url{https://www.freertos.org/Documentation/02-Kernel/04-API-references/10-Semaphores-and-Mutexes}}.
+
+\paragraph{So sánh nhanh}
+\begin{itemize}
+    \item Dùng \textbf{Semaphore} khi mục tiêu chính là \textit{đồng bộ tín hiệu sự kiện}.
+    \item Dùng \textbf{Mutex} khi mục tiêu chính là \textit{bảo vệ vùng dữ liệu/tài nguyên chia sẻ}.
+\end{itemize}
+
+\subsubsection{Rủi ro đồng thời và nguyên tắc thiết kế an toàn}
+
+Khi hệ thống đa task không có cơ chế đồng bộ phù hợp, các lỗi kinh điển dễ xảy ra:
+\begin{itemize}
+    \item \textbf{Race condition}: hai task cùng đọc/ghi dữ liệu làm trạng thái không nhất quán.
+    \item \textbf{Deadlock}: các task chờ lẫn nhau do thứ tự lấy khóa không hợp lý.
+    \item \textbf{Starvation}: task ưu tiên thấp khó có cơ hội chạy.
+\end{itemize}
+
+Các nguyên tắc thiết kế được áp dụng trong dự án:
+\begin{itemize}
+    \item Giữ thời gian nắm giữ mutex ngắn nhất có thể.
+    \item Tránh gọi API blocking dài bên trong vùng đã khóa.
+    \item Thống nhất thứ tự lấy nhiều mutex để hạn chế deadlock.
+    \item Mọi timeout khi chờ khóa đều cần nhánh xử lý lỗi rõ ràng.
+\end{itemize}
+
+\subsection{Vi điều khiển ESP32-S3 và board YoloUNO}
+
+\subsubsection{Tổng quan ESP32-S3}
+
+ESP32-S3 là vi điều khiển hiệu năng cao cho ứng dụng IoT, tích hợp Wi-Fi 2.4GHz và Bluetooth LE, phù hợp cho hệ thống edge có yêu cầu vừa kết nối mạng, vừa xử lý tín hiệu cục bộ. Kiến trúc của ESP32-S3 sử dụng dual-core Xtensa LX7, hỗ trợ tăng tốc cho các phép toán vector và các tác vụ AI nhẹ\footnote{Espressif Systems, ESP32-S3 Series Datasheet: \url{https://www.espressif.com/en/support/documents/technical-documents/esp32-s3-datasheet}}.
+
+Các đặc tính quan trọng cho đề tài:
+\begin{itemize}
+    \item Năng lực đa nhiệm tốt khi chạy FreeRTOS.
+    \item Tài nguyên GPIO phong phú cho cảm biến, LED, quạt và các module mở rộng.
+    \item Hỗ trợ nhiều giao thức ngoại vi: I2C, SPI, UART, PWM (LEDC), ADC.
+    \item Tích hợp Wi-Fi giúp triển khai AP, STA và AP+STA trong cùng firmware.
+\end{itemize}
+
+\subsubsection{Ngoại vi phục vụ hệ thống}
+
+\paragraph{GPIO}
+GPIO dùng để điều khiển/đọc tín hiệu số. Trong đề tài, GPIO đóng vai trò xuất tín hiệu cho LED đơn, NeoPixel và module quạt điều tốc PWM.
+
+\paragraph{I2C}
+I2C là bus hai dây gồm SDA và SCL, cho phép nhiều thiết bị dùng chung đường truyền. Cảm biến DHT20 và LCD I2C cùng truy cập bus nên cần mutex để tránh xung đột truy cập.
+
+\paragraph{PWM (LEDC)}
+LEDC là khối phần cứng PWM của ESP32, cho phép cấu hình tần số và độ phân giải duty cycle\footnote{ESP-IDF Programming Guide -- LED PWM Controller (LEDC): \url{https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/peripherals/ledc.html}}. Với quạt mini, PWM được dùng để điều chỉnh tốc độ mượt theo phần trăm thay vì chỉ bật/tắt.
+
+\paragraph{Wi-Fi AP/STA}
+ESP32-S3 hỗ trợ:
+\begin{itemize}
+    \item \textbf{AP mode}: phát Wi-Fi để thiết bị khác kết nối trực tiếp.
+    \item \textbf{STA mode}: kết nối vào router sẵn có để truy cập Internet.
+    \item \textbf{AP+STA mode}: vận hành đồng thời AP và STA, phù hợp cho hệ thống vừa cấu hình cục bộ vừa đẩy dữ liệu cloud.
+\end{itemize}
+
+\subsubsection{Board YoloUNO và môi trường PlatformIO}
+
+YoloUNO là board học tập tích hợp ESP32-S3, được tối ưu cho mục tiêu thực hành IoT. 
+Môi trường PlatformIO giúp quản lý dependency, build flags, 
+upload firmware và monitor serial một cách nhất quán theo dự án.
+
+Ưu điểm khi dùng PlatformIO trong nhóm:
+\begin{itemize}
+    \item Đồng nhất toolchain giữa các thành viên.
+    \item Quản lý thư viện qua \texttt{lib\_deps} giúp tái lập môi trường nhanh.
+    \item Dễ tách module mã nguồn theo task và kiểm soát phiên bản qua Git.
+\end{itemize}
+
+\subsection{Cảm biến DHT20}
+
+\subsubsection{Nguyên lý đo và đặc trưng dữ liệu}
+
+DHT20 là cảm biến số đo nhiệt độ và độ ẩm, trả dữ liệu qua giao thức I2C\footnote{DHT20/AHT20 digital humidity and temperature sensor datasheet (vendor reference).}. Cảm biến phù hợp cho bài toán giám sát môi trường trong nhà, cảnh báo ngưỡng và làm đầu vào điều khiển thiết bị.
+
+Hai đại lượng chính:
+\begin{itemize}
+    \item \textbf{Nhiệt độ} (\(^\circ\mathrm{C}\))
+    \item \textbf{Độ ẩm tương đối} (\(\%RH\))
+\end{itemize}
+
+Khi sử dụng dữ liệu cảm biến trong hệ điều khiển, cần chú ý:
+\begin{itemize}
+    \item Tần suất đo không nên quá cao gây tải bus I2C.
+    \item Cần lọc nhiễu nhẹ (trung bình trượt, EMA) nếu dữ liệu dao động.
+    \item Nên có kiểm tra dữ liệu bất thường để tránh kích hoạt sai hành vi cảnh báo.
+\end{itemize}
+
+\subsubsection{Giao tiếp I2C với ESP32-S3}
+
+I2C hoạt động theo mô hình master-slave, trong đó ESP32-S3 đóng vai trò master. Chu trình cơ bản:
+\begin{enumerate}
+    \item Master gửi điều kiện START.
+    \item Gửi địa chỉ slave và bit đọc/ghi.
+    \item Trao đổi dữ liệu theo byte, có ACK/NACK.
+    \item Kết thúc bằng điều kiện STOP.
+\end{enumerate}
+
+Vì LCD và DHT20 dùng chung bus, xung đột có thể xảy ra nếu hai task truy cập đồng thời. Do đó, mutex I2C là thành phần bắt buộc để đảm bảo mỗi thời điểm chỉ một tác vụ sử dụng bus.
+
+\subsubsection{Khai thác dữ liệu cho các task nghiệp vụ}
+
+Dữ liệu từ DHT20 phục vụ nhiều nhánh xử lý:
+\begin{itemize}
+    \item Điều khiển trạng thái cảnh báo LED/LCD theo ngưỡng nhiệt độ.
+    \item Điều chỉnh màu NeoPixel theo ngưỡng độ ẩm.
+    \item Hiển thị realtime trên dashboard web.
+    \item Đóng gói payload gửi cloud (Task 6).
+\end{itemize}
+
+Đây là ví dụ điển hình của mô hình \textit{single source of truth}: dữ liệu được cập nhật tập trung trong cấu trúc chia sẻ, sau đó các task tiêu thụ theo nhu cầu riêng.
+
+\subsection{Giao thức và công nghệ web cho Task 4}
+
+\subsubsection{AP mode, STA mode và AP+STA mode}
+
+Ở giai đoạn cấu hình ban đầu, AP mode cho phép người dùng kết nối trực tiếp vào thiết bị mà không cần router trung gian. Điều này phù hợp cho môi trường lab nơi điều kiện mạng không ổn định hoặc mỗi nhóm dùng mạng riêng.
+
+Sau khi người dùng nhập đúng SSID/password ở trang \texttt{/settings}, thiết bị chuyển sang AP+STA để:
+\begin{itemize}
+    \item vẫn giữ kênh truy cập cục bộ qua AP,
+    \item đồng thời có kết nối Internet qua STA cho các chức năng cloud.
+\end{itemize}
+
+Thiết kế này giúp tăng tính linh hoạt triển khai và khả năng bảo trì tại hiện trường.
+
+\subsubsection{ESPAsyncWebServer và kiến trúc non-blocking}
+
+Với hệ thống đa task, web server non-blocking là lựa chọn phù hợp để tránh chiếm CPU lâu khi xử lý request. ESPAsyncWebServer cho phép đăng ký callback theo từng route, xử lý sự kiện bất đồng bộ và phản hồi nhanh cho client\footnote{ESPAsyncWebServer repository: \url{https://github.com/me-no-dev/ESPAsyncWebServer}}.
+
+Lợi ích chính:
+\begin{itemize}
+    \item Giảm nguy cơ treo khi nhiều client truy cập đồng thời.
+    \item Tách biệt rõ tầng giao diện và tầng điều khiển phần cứng.
+    \item Dễ xây dựng dashboard với cập nhật trạng thái theo chu kỳ ngắn.
+\end{itemize}
+
+\subsubsection{RESTful API và JSON}
+
+Hệ thống web điều khiển thiết bị thường triển khai theo mô hình REST nhẹ:
+\begin{itemize}
+    \item \texttt{GET /api/state}: trả trạng thái sensor và actuator.
+    \item \texttt{POST /api/led}: cập nhật bật/tắt và màu RGB.
+    \item \texttt{POST /api/fan}: cập nhật bật/tắt và tốc độ quạt.
+    \item \texttt{POST /api/wifi}: nhận SSID/password để cấu hình STA.
+\end{itemize}
+
+JSON được chọn vì\footnote{RFC 8259 -- The JavaScript Object Notation (JSON) Data Interchange Format: \url{https://www.rfc-editor.org/rfc/rfc8259}}:
+\begin{itemize}
+    \item Cấu trúc key-value rõ ràng, dễ parse trên cả frontend và firmware.
+    \item Dễ mở rộng thêm trường mà không phá vỡ tương thích cũ.
+    \item Tương thích tốt với thư viện ArduinoJson.
+\end{itemize}
+
+Ví dụ payload điều khiển LED:
+\begin{lstlisting}[language=, caption=Payload JSON điều khiển LED RGB]
+{
+  "enabled": true,
+  "r": 255,
+  "g": 120,
+  "b": 40
+}
+\end{lstlisting}
+
+\subsubsection{Thread-safety khi web server truy cập dữ liệu hệ thống}
+
+Web callback chạy độc lập với task cảm biến/hiển thị. Vì vậy, mọi thao tác đọc ghi vào biến chia sẻ đều phải đi qua mutex để tránh lỗi race condition. Nguyên tắc triển khai:
+\begin{itemize}
+    \item Khóa mutex ngắn gọn, chỉ bao vùng sao chép dữ liệu cần thiết.
+    \item Không gọi xử lý mạng phức tạp khi đang giữ mutex.
+    \item Xác thực input API trước khi ghi xuống vùng chia sẻ.
+\end{itemize}
+
+\subsubsection{Thiết kế dashboard cho khả dụng cao}
+
+Dashboard của Task 4 cần cân bằng giữa trực quan và tính vận hành:
+\begin{itemize}
+    \item Card cảm biến: nhiệt độ, độ ẩm cập nhật định kỳ.
+    \item Card LED RGB: công tắc bật/tắt và bộ chọn màu.
+    \item Card quạt PWM: công tắc bật/tắt và thanh trượt tốc độ.
+    \item Trang \texttt{/settings}: cấu hình Wi-Fi với phản hồi thành công/thất bại rõ ràng.
+\end{itemize}
+
+Các thành phần này đáp ứng trực tiếp yêu cầu đề bài về tối thiểu hai nút điều khiển và giao diện dễ sử dụng.
+
+\subsection{TinyML cho Task 5}
+
+\subsubsection{Khái niệm TinyML và Edge AI}
+
+TinyML là hướng triển khai mô hình học máy lên thiết bị tài nguyên hạn chế như vi điều khiển\footnote{TinyML Foundation: \url{https://www.tinyml.org/}}. Thay vì gửi toàn bộ dữ liệu thô lên cloud để suy luận, thiết bị có thể xử lý tại chỗ (on-device inference), từ đó giảm độ trễ, tăng tính riêng tư và giảm phụ thuộc kết nối mạng.
+
+Đối với ESP32-S3, TinyML đặc biệt hữu ích cho các bài toán nhận dạng trạng thái môi trường, phát hiện bất thường hoặc phân loại sự kiện đơn giản.
+
+\subsubsection{Quy trình triển khai TinyML}
+
+Quy trình điển hình gồm các bước:
+\begin{enumerate}
+    \item \textbf{Thu thập dữ liệu}: đo đạc từ cảm biến trong nhiều bối cảnh vận hành.
+    \item \textbf{Gán nhãn}: định nghĩa lớp mục tiêu (normal/warning/critical hoặc lớp khác).
+    \item \textbf{Huấn luyện mô hình}: xây dựng và tối ưu trong môi trường Python/TensorFlow.
+    \item \textbf{Nén và lượng tử hóa}: giảm kích thước model (float32 \(\rightarrow\) int8).
+    \item \textbf{Chuyển đổi TFLite}: xuất file \texttt{.tflite} và nhúng vào firmware.
+    \item \textbf{Suy luận trên thiết bị}: tích hợp TensorFlow Lite Micro.
+\end{enumerate}
+
+\subsubsection{Lượng tử hóa (Quantization) và đánh đổi}
+
+Lượng tử hóa giúp giảm RAM/Flash và tăng tốc suy luận, nhưng có thể làm giảm nhẹ độ chính xác. Vì vậy cần đánh giá sau triển khai bằng bộ dữ liệu kiểm thử thực tế. Các chỉ số nên báo cáo:
+\begin{itemize}
+    \item Accuracy tổng thể.
+    \item Precision/Recall theo từng lớp (nếu bài toán phân lớp nhiều nhãn).
+    \item Thời gian suy luận trung bình (ms/inference).
+\end{itemize}
+
+\subsubsection{Vai trò của TinyML trong kiến trúc tổng thể}
+
+TinyML mở rộng hệ thống từ \textit{giám sát-thụ động} sang \textit{phân tích-chủ động}. Thay vì chỉ hiển thị nhiệt độ/độ ẩm tức thời, hệ thống có thể dự đoán trạng thái môi trường hoặc phát hiện điều kiện bất thường để kích hoạt cảnh báo sớm.
+
+\subsection{MQTT và nền tảng CoreIOT cho Task 6}
+
+\subsubsection{Mô hình Publish/Subscribe của MQTT}
+
+MQTT là giao thức nhắn tin nhẹ, tối ưu cho IoT nhờ overhead thấp và độ tin cậy phù hợp mạng không ổn định\footnote{OASIS MQTT Version 5.0 Standard: \url{https://docs.oasis-open.org/mqtt/mqtt/v5.0/mqtt-v5.0.html}}. MQTT sử dụng mô hình publish/subscribe thông qua broker:
+\begin{itemize}
+    \item \textbf{Publisher}: ESP32 gửi dữ liệu cảm biến lên topic.
+    \item \textbf{Broker}: trung gian nhận và phân phối thông điệp.
+    \item \textbf{Subscriber}: dashboard/cloud service nhận dữ liệu để hiển thị hoặc xử lý.
+\end{itemize}
+
+Ưu điểm chính:
+\begin{itemize}
+    \item Tách rời nguồn phát và nơi nhận dữ liệu.
+    \item Dễ mở rộng số lượng client theo thời gian.
+    \item Hỗ trợ mức QoS giúp cân bằng giữa độ tin cậy và băng thông.
+\end{itemize}
+
+\subsubsection{Khái niệm Topic, Payload và QoS}
+
+\paragraph{Topic}
+Topic là kênh logic phân loại dữ liệu, ví dụ: \texttt{yolouno/sensor/telemetry}. Cấu trúc topic theo dạng cây giúp dễ quản trị khi hệ thống có nhiều thiết bị.
+
+\paragraph{Payload}
+Payload thường ở dạng JSON để chứa các trường như nhiệt độ, độ ẩm, trạng thái thiết bị, timestamp.
+
+\paragraph{QoS}
+MQTT có ba mức QoS phổ biến:
+\begin{itemize}
+    \item QoS 0: gửi tối đa một lần, không xác nhận.
+    \item QoS 1: đảm bảo nhận ít nhất một lần.
+    \item QoS 2: đảm bảo nhận đúng một lần (chi phí cao nhất).
+\end{itemize}
+
+Với dữ liệu telemetry cập nhật liên tục, QoS 0 hoặc QoS 1 thường là lựa chọn hợp lý.
+
+\subsubsection{Tích hợp CoreIOT trong hệ thống}
+
+CoreIOT cung cấp hạ tầng quản lý thiết bị, xác thực token và dashboard hiển thị dữ liệu. Quy trình tích hợp cơ bản:
+\begin{enumerate}
+    \item Tạo thiết bị trên CoreIOT.
+    \item Nhận token xác thực tương ứng thiết bị.
+    \item Cấu hình broker/topic theo template của nền tảng.
+    \item ESP32 publish định kỳ dữ liệu cảm biến.
+    \item Theo dõi dữ liệu realtime trên dashboard cloud.
+\end{enumerate}
+
+Điểm then chốt của Task 6 là thiết bị phải có kết nối Internet, do đó STA mode (hoặc AP+STA) là bắt buộc.
+
+\subsubsection{Bảo mật và vận hành thực tế}
+
+Khi đưa hệ thống ra môi trường thực, cần quan tâm:
+\begin{itemize}
+    \item Bảo vệ token thiết bị, tránh hard-code công khai trên repository.
+    \item Có cơ chế reconnect khi Wi-Fi/MQTT bị mất kết nối.
+    \item Giới hạn tần suất publish để tránh quá tải mạng và broker.
+\end{itemize}
+
+\subsection{Tổng kết chương}
+
+Chương này đã xây dựng nền tảng lý thuyết cho toàn bộ dự án: từ đa nhiệm FreeRTOS, đồng bộ semaphore/mutex, phần cứng ESP32-S3, cảm biến DHT20, web server AP/STA, đến TinyML và MQTT-CoreIOT. Các nội dung này là cơ sở để triển khai chi tiết ở chương hiện thực và đánh giá thực nghiệm.
