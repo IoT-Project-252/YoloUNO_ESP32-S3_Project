@@ -15,6 +15,7 @@ struct SharedData
     SemaphoreHandle_t mutex;
     SemaphoreHandle_t i2cMutex;
     SemaphoreHandle_t neoPixelMutex;
+    SemaphoreHandle_t serialMutex;      // Define mutex for Serial Monitor protection
     
     SemaphoreHandle_t semNormal;
     SemaphoreHandle_t semWarning;
