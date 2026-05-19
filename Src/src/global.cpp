@@ -14,6 +14,7 @@ void initGlobalData()
     // Initialize Mutex & Semaphores
     projectSharedData->mutex = xSemaphoreCreateMutex();
     projectSharedData->i2cMutex = xSemaphoreCreateMutex();
+    projectSharedData->neoPixelMutex = xSemaphoreCreateMutex();
 
     projectSharedData->semNormal = xSemaphoreCreateBinary();
     projectSharedData->semWarning = xSemaphoreCreateBinary();

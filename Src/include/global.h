@@ -14,6 +14,7 @@ struct SharedData
     
     SemaphoreHandle_t mutex;
     SemaphoreHandle_t i2cMutex;
+    SemaphoreHandle_t neoPixelMutex;
     
     SemaphoreHandle_t semNormal;
     SemaphoreHandle_t semWarning;
