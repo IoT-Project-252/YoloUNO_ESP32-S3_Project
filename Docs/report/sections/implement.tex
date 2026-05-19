@@ -1,0 +1,137 @@
+﻿\newpage
+\section{Hiện thực}
+
+\subsection{Task 3 - Temperature and Humidity Monitoring with LCD Display}
+
+Task 3 tập trung vào ba yêu cầu cốt lõi của đề bài: (1) đo nhiệt độ/độ ẩm theo chu kỳ, (2) hiển thị ít nhất 3 trạng thái trên LCD dựa theo ngưỡng đo, và (3) loại bỏ các biến toàn cục rời rạc bằng mô hình dữ liệu dùng chung có đồng bộ trong FreeRTOS.
+
+\subsubsection*{Mục tiêu hiện thực}
+
+Nhóm hiện thực Task 3 theo hướng tách rõ chức năng thành hai task FreeRTOS độc lập:
+\begin{itemize}
+    \item \texttt{temp\_humi}: đọc DHT20 và cập nhật dữ liệu đo vào vùng dùng chung.
+    \item \texttt{displayLCD}: đọc trạng thái từ semaphore và render nội dung LCD tương ứng.
+\end{itemize}
+
+Hai task này được tạo trong \texttt{setup()} của \texttt{main.cpp}:
+\begin{lstlisting}[language=c, caption=Khởi tạo các task liên quan Task 3 trong main.cpp]
+xTaskCreate(temp_humi,  "TempHumi",   4096, projectSharedData, 1, NULL);
+xTaskCreate(displayLCD, "DisplayLCD", 4096, projectSharedData, 1, NULL);
+\end{lstlisting}
+
+\subsubsection*{Tổ chức dữ liệu chia sẻ và loại bỏ global variables}
+
+Thay vì dùng nhiều biến toàn cục rời rạc, hệ thống gom toàn bộ trạng thái dùng chung vào \texttt{SharedData}. Với Task 3, các thành phần quan trọng gồm:
+\begin{itemize}
+    \item \texttt{temperature}, \texttt{humidity}: dữ liệu đo mới nhất.
+    \item \texttt{mutex}: bảo vệ truy cập dữ liệu đo (tránh race condition).
+    \item \texttt{i2cMutex}: bảo vệ bus I2C dùng chung giữa DHT20 và LCD.
+    \item \texttt{semNormal}, \texttt{semWarning}, \texttt{semCritical}: tín hiệu trạng thái hiển thị.
+\end{itemize}
+
+\begin{lstlisting}[language=c, caption=Cấu trúc SharedData dùng cho Task 3 (trích global.h)]
+struct SharedData
+{
+    float temperature;
+    float humidity;
+
+    SemaphoreHandle_t mutex;
+    SemaphoreHandle_t i2cMutex;
+
+    SemaphoreHandle_t semNormal;
+    SemaphoreHandle_t semWarning;
+    SemaphoreHandle_t semCritical;
+};
+\end{lstlisting}
+
+Cách tổ chức này đảm bảo dữ liệu được quản lý tập trung, giảm phụ thuộc chéo giữa module và phù hợp yêu cầu ``remove ALL global variables'' theo tinh thần đề bài.
+
+\subsubsection*{Task đọc cảm biến DHT20 và phát tín hiệu trạng thái}
+
+Task \texttt{temp\_humi} thực hiện ba bước chính trong mỗi chu kỳ:
+\begin{enumerate}
+    \item Khóa \texttt{i2cMutex} để đọc DHT20 an toàn.
+    \item Khóa \texttt{mutex} để ghi \texttt{temperature/humidity} vào vùng chia sẻ.
+    \item So sánh ngưỡng nhiệt độ và \texttt{xSemaphoreGive()} semaphore trạng thái tương ứng.
+\end{enumerate}
+
+Đoạn logic ngưỡng:
+\begin{lstlisting}[language=c, caption=Phát semaphore theo ngưỡng nhiệt độ (trích temp\_humi.cpp)]
+if (t >= 20 && t < 30)
+{
+    xSemaphoreGive(sharedData->semNormal);
+}
+else if ((t >= 30.0 && t < 38.0) || (t >= 7 && t < 20))
+{
+    xSemaphoreGive(sharedData->semWarning);
+}
+else
+{
+    xSemaphoreGive(sharedData->semCritical);
+}
+\end{lstlisting}
+
+Tương ứng, hệ thống có ba mức trạng thái hiển thị như Bảng~\ref{tab:task3-thresholds}.
+
+\begin{table}[h!]
+\centering
+\caption{Ngưỡng trạng thái hiển thị của Task 3}
+\label{tab:task3-thresholds}
+\begin{tabular}{|c|c|c|}
+\hline
+\textbf{Khoảng nhiệt độ} & \textbf{Trạng thái} & \textbf{Semaphore phát} \\
+\hline
+$20 \leq T < 30$ & NORMAL & \texttt{semNormal} \\
+\hline
+$30 \leq T < 38$ hoặc $7 \leq T < 20$ & WARNING & \texttt{semWarning} \\
+\hline
+$T < 7$ hoặc $T \geq 38$ & CRITICAL & \texttt{semCritical} \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsubsection*{Task hiển thị LCD theo mô hình state machine}
+
+Task \texttt{displayLCD} hoạt động như một state machine dựa trên semaphore. Ở mỗi vòng lặp:
+\begin{itemize}
+    \item Task kiểm tra lần lượt \texttt{semNormal}, \texttt{semWarning}, \texttt{semCritical} theo cơ chế non-blocking.
+    \item Khi nhận được semaphore, task khóa \texttt{mutex} để lấy bản sao dữ liệu đo.
+    \item Task khóa \texttt{i2cMutex} để render nội dung lên LCD, tránh tranh chấp bus I2C với task cảm biến.
+\end{itemize}
+
+\begin{lstlisting}[language=c, caption=Khối xử lý trạng thái WARNING trên LCD (trích display\_lcd.cpp)]
+else if (xSemaphoreTake(sharedData->semWarning, 0) == pdTRUE)
+{
+    if (xSemaphoreTake(sharedData->mutex, pdMS_TO_TICKS(50)) == pdTRUE)
+    {
+        localTemp = sharedData->temperature;
+        localHum = sharedData->humidity;
+        xSemaphoreGive(sharedData->mutex);
+    }
+
+    if (xSemaphoreTake(sharedData->i2cMutex, pdMS_TO_TICKS(100)) == pdTRUE)
+    {
+        lcd.clear();
+        lcd.setCursor(0, 0); lcd.print("STATE: WARNING!");
+        lcd.setCursor(0, 1); lcd.print("T:"); lcd.print(localTemp, 1);
+        lcd.print("C H:"); lcd.print(localHum, 0); lcd.print("%");
+        xSemaphoreGive(sharedData->i2cMutex);
+    }
+}
+\end{lstlisting}
+
+Riêng trạng thái \texttt{CRITICAL}, nhóm bổ sung hiệu ứng nhấp nháy đèn nền LCD (backlight blink) để tăng khả năng cảnh báo trực quan cho người dùng.
+
+\subsubsection*{Điểm nhấn kỹ thuật của Task 3}
+
+\begin{itemize}
+    \item \textbf{Đồng bộ đa tầng}: dùng cả mutex dữ liệu và mutex I2C để xử lý đồng thời hai loại xung đột khác nhau.
+    \item \textbf{Tách producer-consumer}: task cảm biến chỉ phát tín hiệu trạng thái, task LCD chịu trách nhiệm hiển thị.
+    \item \textbf{Thiết kế mở rộng}: cấu trúc Task 3 có thể tái sử dụng cho Task 4 (web dashboard) và Task 6 (publish cloud) nhờ vùng dữ liệu chia sẻ chuẩn hóa.
+    \item \textbf{Ổn định thời gian chạy}: các nhánh lỗi (đọc DHT20 thất bại hoặc không lấy được mutex) đều có timeout và retry, giúp tránh treo hệ thống.
+\end{itemize}
+
+\subsubsection*{Tổng kết Task 3}
+
+Task 3 đã đáp ứng các yêu cầu bắt buộc của đề bài: có cơ chế phát semaphore theo điều kiện đo, có ít nhất 3 trạng thái hiển thị trên LCD, và dùng mô hình dữ liệu chia sẻ có bảo vệ mutex thay cho cách dùng biến toàn cục rời rạc. Kết quả là hệ thống chạy ổn định trong môi trường đa task và tạo nền tảng cho các task mở rộng ở các chương tiếp theo.
+
