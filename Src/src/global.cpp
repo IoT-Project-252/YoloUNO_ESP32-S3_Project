@@ -11,7 +11,7 @@ void initGlobalData()
     // Sensor defaults
     projectSharedData->temperature = 0.0f;
     projectSharedData->humidity = 0.0f;
-
+    
     // LED RGB defaults (off, black)
     projectSharedData->ledOn      = false;
     projectSharedData->ledR       = 0;
@@ -32,6 +32,8 @@ void initGlobalData()
     projectSharedData->mutex         = xSemaphoreCreateMutex();
     projectSharedData->i2cMutex      = xSemaphoreCreateMutex();
     projectSharedData->actuatorMutex = xSemaphoreCreateMutex();
+    projectSharedData->neoPixelMutex = xSemaphoreCreateMutex();
+    projectSharedData->serialMutex   = xSemaphoreCreateMutex();
 
     projectSharedData->semNormal   = xSemaphoreCreateBinary();
     projectSharedData->semWarning  = xSemaphoreCreateBinary();

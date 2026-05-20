@@ -1,6 +1,7 @@
 #include "global.h"
 #include "temp_humi.h"
 #include "display_lcd.h"
+#include "neo_led.h"
 #include "actuators.h"
 #include "web_server.h"
 #include "pir_mqtt.h"
@@ -13,6 +14,9 @@ void setup()
 
     initGlobalData();
 
+    xTaskCreate(temp_humi, "Task Read Temperature & Humidity", 4096, projectSharedData, 1, NULL);
+    xTaskCreate(controlNeoLED, "Task Neo LED", 4096, projectSharedData, 1, NULL);
+    xTaskCreate(displayLCD, "Display on LCD", 4096, projectSharedData, 1, NULL);
     // Task 3: Temperature & Humidity sensor reading
     // xTaskCreate(temp_humi,      "TempHumi",    4096, projectSharedData, 1, NULL);
 

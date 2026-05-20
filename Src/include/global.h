@@ -33,6 +33,8 @@ struct SharedData
     SemaphoreHandle_t mutex;       // protects temperature / humidity
     SemaphoreHandle_t i2cMutex;    // protects I2C bus
     SemaphoreHandle_t actuatorMutex; // protects LED & fan fields
+    SemaphoreHandle_t neoPixelMutex;    // Define mutex for NeoPixel LED protection
+    SemaphoreHandle_t serialMutex;      // Define mutex for Serial Monitor protection
 
     // --- Semaphores for LCD state machine ---
     SemaphoreHandle_t semNormal;
