@@ -1,0 +1,188 @@
+\documentclass[a4paper]{article}
+\usepackage{vntex}
+\usepackage{amsmath}
+\usepackage{indentfirst}
+\usepackage{blindtext}
+\usepackage[english]{babel}
+\usepackage{comment}
+\usepackage{listings}
+%\usepackage{minted}
+%\usepackage[T5]{fontenc}
+\usepackage{array} % Để có các tùy chọn cột nâng cao (như p{})
+\usepackage{longtable} % Nếu bảng có thể kéo dài qua nhiều trang
+\usepackage{geometry} % Để điều chỉnh lề cho bảng rộng
+\usepackage{a4wide,amssymb,epsfig,latexsym,multicol,array,hhline,fancyhdr}
+\usepackage{booktabs}
+\usepackage{lastpage}
+\usepackage[lined,boxed,commentsnumbered]{algorithm2e}
+\usepackage{enumerate}
+\usepackage{makecell}
+\usepackage{color}
+\usepackage{svg}
+\usepackage{graphicx}							% Standard graphics package
+\usepackage{enumitem}
+\usepackage{tabularx, caption}
+\captionsetup{labelformat=empty}
+\usepackage{multirow}
+\usepackage[framemethod=tikz]{mdframed}% For highlighting paragraph backgrounds
+\usepackage{multicol}
+\usepackage{rotating}
+\usepackage{graphics}
+\usepackage{geometry}
+\usepackage{setspace}
+\usepackage{epsfig}
+\usepackage{tikz}
+%\usepackage{minted}
+%\usepackage{float}
+\usepackage{xcolor}
+\usetikzlibrary{arrows,snakes,backgrounds}
+\usepackage{hyperref}
+\hypersetup{urlcolor=blue,linkcolor=black,citecolor=black,colorlinks=true}
+\usepackage{perpage}
+\MakePerPage{footnote}
+
+
+
+%\everymath{\color{blue}}
+%\usepackage{fancyhdr}
+\setlength{\headheight}{40pt}
+\pagestyle{fancy}
+\fancyhead{} % clear all header fields
+\fancyhead[L]{
+ \begin{tabular}{rl}
+    \begin{picture}(25,15)(0,0)
+    \put(0,-8){\includegraphics[width=8mm, height=8mm]{pictures/hcmut.png}}
+    %\put(0,-8){\epsfig{width=10mm,figure=hcmut.eps}}
+   \end{picture}&
+	%\includegraphics[width=8mm, height=8mm]{hcmut.png} & %
+	\begin{tabular}{l}
+		\textbf{\bf \ttfamily Trường Đại học Bách Khoa}\\
+		\textbf{\bf \ttfamily Khoa Khoa học và Kỹ thuật máy tính}
+	\end{tabular} 	
+ \end{tabular}
+}
+\fancyhead[R]{
+	\begin{tabular}{l}
+		\tiny \bf \\
+		\tiny \bf 
+	\end{tabular}  }
+\fancyfoot{} % clear all footer fields
+\fancyfoot[L]{\scriptsize \ttfamily {Bài tập lớn PTỨD IoT, Học kỳ 252, Năm học 2025-2026}}
+\fancyfoot[R]{\scriptsize \ttfamily Page {\thepage}/\pageref{LastPage}}
+\renewcommand{\headrulewidth}{0.3pt}
+\renewcommand{\footrulewidth}{0.3pt}
+
+
+%%%
+\setcounter{secnumdepth}{4}
+\setcounter{tocdepth}{3}
+\makeatletter
+\newcounter {subsubsubsection}[subsubsection]
+\renewcommand\thesubsubsubsection{\thesubsubsection .\@alph\c@subsubsubsection}
+\newcommand\subsubsubsection{\@startsection{subsubsubsection}{4}{\z@}%
+                                     {-3.25ex\@plus -1ex \@minus -.2ex}%
+                                     {1.5ex \@plus .2ex}%
+                                     {\normalfont\normalsize\bfseries}}
+\newcommand*\l@subsubsubsection{\@dottedtocline{3}{10.0em}{4.1em}}
+\newcommand*{\subsubsubsectionmark}[1]{}
+\makeatother
+
+\begin{document}
+
+\begin{titlepage}
+\begin{center}
+\Large Đại học Quốc gia Thành phố Hồ Chí Minh \\
+\Large Trường Đại học Bách Khoa \\
+\Large Khoa Khoa học và Kỹ thuật máy tính
+\end{center}
+
+\vspace{1cm}
+
+\begin{figure}[h!]
+\begin{center}
+\includegraphics[width=5cm]{pictures/hcmut.png}
+\end{center}
+\end{figure}
+
+\vspace{1cm}
+
+
+\begin{center}
+\begin{tabular}{c}
+	\multicolumn{1}{l}{\textbf{{\Large PHÁT TRIỂN ỨNG DỤNG IOT (C03037)}}}\\
+	~~\\
+	\hline
+	\\
+	\multicolumn{1}{l}{\textbf{{\Large BÀI TẬP LỚN }}}\\
+	\\
+        \textbf{{\LARGE  YOLOUNO PLATFORMIO RTOS PROJECT}}\\
+	\\
+	\hline
+\end{tabular}
+\end{center}
+
+\vspace{1cm}
+
+\begin{center}
+\begin{minipage}{0.8\textwidth}
+\centering   % <<< THÊM DÒNG NÀY
+
+\begin{tabular}{rrl}
+ & Giảng viên hướng dẫn: & TS. Lê Trọng Nhân \\
+ & Lớp: & L01\\
+ & Sinh viên: & Lê Hoàng Tân - 2313050\\
+ & & Đỗ Đăng Khoa - 2311581\\
+ & & Lê Thành Nhân - 2312426\\
+\end{tabular}
+
+\vspace{1cm}
+
+{\footnotesize Thành phố Hồ Chí Minh - 2026}
+
+\end{minipage}
+\end{center}
+
+
+
+\thispagestyle{empty}
+\end{titlepage}
+
+\newpage
+\renewcommand{\contentsname}{Mục lục}
+\tableofcontents
+\newpage
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\onehalfspacing
+
+% ======= LISTINGS SETTINGS =======
+\definecolor{codebg}{HTML}{F5F4EE}
+\lstset{
+    language=c,
+    basicstyle=\ttfamily\normalsize,
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    stringstyle=\color{red},
+    showstringspaces=false,
+    breaklines=true,
+    numbers=left,
+    numberstyle=\tiny,
+    numbersep=6pt,
+    frame=single,
+    backgroundcolor=\color{codebg},
+    tabsize=4,
+    captionpos=b,
+}
+
+\input{sections/test}
+\input{sections/intro.tex}
+\input{sections/theory.tex}
+\input{sections/overview.tex}
+\input{sections/implement.tex}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\end{document}
+

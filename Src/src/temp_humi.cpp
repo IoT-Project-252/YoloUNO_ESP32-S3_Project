@@ -56,27 +56,45 @@ void temp_humi(void *pvParameters)
             sharedData->temperature = t;
             sharedData->humidity = h;
             xSemaphoreGive(sharedData->mutex);
+
+            // // SERIAL MUTEX PROTECTION: Prevent interleaved text output
+            // if (xSemaphoreTake(sharedData->serialMutex, portMAX_DELAY) == pdTRUE) {
+            //     Serial.printf("Temperature: %.2f°C | Humidity: %.2f%%\n", t, h);
+            //     xSemaphoreGive(sharedData->serialMutex);
+            // }
         }
 
+        // Determine the current state and assign the corresponding string
+        const char* stateStr = "";
+
         // THRESHOLD LOGIC: Trigger the appropriate state semaphore based on the temperature
-        if (t < 30.0) 
+        if (t >= 20 && t < 30) 
         {
-            // Normal state: Temperature < 30.0 °C
+            // Normal state
             xSemaphoreGive(sharedData->semNormal);
+            stateStr = "Normal";
         } 
-        else if (t >= 30.0 && t < 38.0) 
+        else if ((t >= 30.0 && t < 38.0) || (t >= 7 && t < 20))
         {
-            // Warning state: 30.0 °C <= Temperature < 38.0 °C
+            // Warning state
             xSemaphoreGive(sharedData->semWarning);
+            stateStr = "Warning";
         } 
         else 
         {
-            // Critical state: Temperature >= 38.0 °C
+            // Critical state
             xSemaphoreGive(sharedData->semCritical);
+            stateStr = "Critical";
         }
 
-        // Block the task for 5000ms (5 seconds) before the next sampling cycle
-        // This yields the CPU to other tasks and matches the slow polling rate of DHT sensors
+        // SERIAL MUTEX PROTECTION: Combine output into a single atomic print and flush
+        if (xSemaphoreTake(sharedData->serialMutex, portMAX_DELAY) == pdTRUE) 
+        {
+            Serial.printf("Temperature: %.2f°C | Humidity: %.2f%% | State: %s\n", t, h, stateStr);
+            Serial.flush(); // Ensure the USB CDC buffer is completely sent to the host PC
+            xSemaphoreGive(sharedData->serialMutex);
+        }
+
         vTaskDelay(pdMS_TO_TICKS(5000)); 
     }
 }
