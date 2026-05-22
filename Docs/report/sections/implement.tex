@@ -1,5 +1,159 @@
-﻿\newpage
+\newpage
 \section{Hiện thực}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Task 1 -- Điều khiển LED đơn theo điều kiện nhiệt độ}
+
+Task 1 mở rộng chức năng LED đơn của dự án gốc bằng cách liên kết hành vi nhấp nháy với dữ liệu nhiệt độ đo được theo thời gian thực từ cảm biến DHT20. Ba mức hành vi khác nhau -- mỗi mức ứng với một khoảng nhiệt độ cụ thể -- được điều chỉnh cả về độ sáng và tần suất nhấp nháy thông qua phần cứng PWM. Cơ chế đồng bộ hóa giữa task đọc cảm biến và task điều khiển LED được thực hiện hoàn toàn qua \textbf{FreeRTOS binary semaphore}, không tạo thêm biến toàn cục mới theo đúng yêu cầu đề bài.
+
+\subsubsection*{Mục tiêu hiện thực}
+
+Nhóm hiện thực Task 1 theo hướng tách rõ chức năng thành hai task FreeRTOS độc lập:
+\begin{itemize}
+    \item \texttt{temp\_humi}: đọc DHT20 định kỳ và phát tín hiệu trạng thái nhiệt độ qua semaphore.
+    \item \texttt{led\_blinky}: nhận tín hiệu trạng thái và điều khiển LED GPIO 48 theo hành vi tương ứng.
+\end{itemize}
+
+Hai task này được tạo trong \texttt{setup()} của \texttt{main.cpp}:
+\begin{lstlisting}[language=c, caption=Khởi tạo các task liên quan Task 1 trong main.cpp]
+xTaskCreate(temp_humi,  "Task Read Temperature & Humidity",
+            4096, projectSharedData, 1, NULL);
+xTaskCreate(led_blinky, "Task LED Blinky",
+            2048, projectSharedData, 1, NULL);
+\end{lstlisting}
+
+\subsubsection*{Định nghĩa ngưỡng nhiệt độ và hành vi LED}
+
+Đề bài yêu cầu ít nhất ba hành vi nhấp nháy tương ứng với ba khoảng nhiệt độ ($< 26\,^\circ\mathrm{C}$; $[26, 28]\,^\circ\mathrm{C}$; $> 28\,^\circ\mathrm{C}$). Nhóm triển khai bằng cách kết hợp điều chỉnh duty cycle PWM và chu kỳ bật/tắt để tạo ra sự phân biệt trực quan đa chiều:
+
+\begin{table}[h!]
+\centering
+\caption{Ngưỡng nhiệt độ và hành vi LED của Task 1}
+\label{tab:task1-thresholds}
+\begin{tabular}{|c|c|c|c|c|}
+\hline
+\textbf{Vùng} & \textbf{Điều kiện} & \textbf{Duty cycle} & \textbf{Thời gian bật} & \textbf{Thời gian tắt} \\
+\hline
+Normal   & $T < 26\,^\circ\mathrm{C}$              & 64/255 $\approx$ 25\% & 1000 ms & 1000 ms \\
+\hline
+Warning  & $26 \leq T \leq 28\,^\circ\mathrm{C}$  & 160/255 $\approx$ 63\% & 500 ms & 500 ms \\
+\hline
+Critical & $T > 28\,^\circ\mathrm{C}$              & 255/255 = 100\%        & 200 ms & 200 ms \\
+\hline
+\end{tabular}
+\end{table}
+
+Việc sử dụng PWM hardware (khối LEDC của ESP32-S3) thay vì chỉ bật/tắt GPIO đơn giản mang lại ưu điểm: tần số sóng mang 5\,kHz hoàn toàn do phần cứng duy trì trong suốt chu kỳ \texttt{vTaskDelay()}, tách biệt hoàn toàn giữa tần số carrier và chu kỳ nhấp nháy do phần mềm điều khiển.
+
+\subsubsection*{Cơ chế đồng bộ bằng semaphore -- mô hình producer-consumer}
+
+Nhằm tuân thủ yêu cầu ``dùng biến từ task khác, không tạo biến mới'', nhóm thiết kế bộ ba binary semaphore chuyên dụng cho Task 1, khai báo trong cấu trúc \texttt{SharedData}:
+
+\begin{lstlisting}[language=c, caption=Các semaphore dành riêng cho Task 1 (trích global.h)]
+struct SharedData {
+    // ...
+    // Semaphore dieu kien nhiet do cho Task 1 (LED blinky)
+    SemaphoreHandle_t semTempNormal;    // T < 26 do C
+    SemaphoreHandle_t semTempWarning;   // 26 <= T <= 28 do C
+    SemaphoreHandle_t semTempCritical;  // T > 28 do C
+    // ...
+};
+\end{lstlisting}
+
+Ba semaphore này được khởi tạo bằng \texttt{xSemaphoreCreateBinary()} trong \texttt{initGlobalData()} trước khi bất kỳ task nào được tạo. Theo đặc tính của FreeRTOS, binary semaphore khởi tạo ở trạng thái \textit{taken} (rỗng), vì vậy \texttt{led\_blinky} sẽ giữ nguyên \texttt{mode = 1} (Warning) cho đến khi lần đọc cảm biến đầu tiên hoàn thành.
+
+\paragraph{Producer: task \texttt{temp\_humi}}
+Sau mỗi chu kỳ đọc DHT20 thành công (mỗi 5\,000\,ms), task so sánh nhiệt độ với ngưỡng và \texttt{xSemaphoreGive()} đúng một semaphore tương ứng:
+
+\begin{lstlisting}[language=c, caption=Phát semaphore nhiệt độ cho Task 1 (trích temp\_humi.cpp)]
+// Task 1: nguong nhiet do cho LED blinky (<26, 26-28, >28)
+if (t < 26.0f) {
+    xSemaphoreGive(sharedData->semTempNormal);
+} else if (t <= 28.0f) {
+    xSemaphoreGive(sharedData->semTempWarning);
+} else {
+    xSemaphoreGive(sharedData->semTempCritical);
+}
+\end{lstlisting}
+
+Điểm quan trọng: mỗi chu kỳ chỉ phát \textit{đúng một} semaphore, đảm bảo consumer không bao giờ nhận hai tín hiệu mâu thuẫn trong cùng một vòng lặp.
+
+\paragraph{Consumer: task \texttt{led\_blinky}}
+Task sử dụng \texttt{xSemaphoreTake} với \texttt{timeout = 0} (non-blocking) để thăm dò ba semaphore mỗi đầu chu kỳ nhấp nháy:
+
+\begin{lstlisting}[language=c, caption=Vòng lặp điều khiển LED theo tín hiệu semaphore (trích led\_blinky.cpp)]
+uint8_t mode = 1; // mac dinh: Warning (26-28 do C)
+
+while (1) {
+    // Non-blocking poll -- cap nhat mode neu co tin hieu moi
+    if (xSemaphoreTake(sharedData->semTempNormal,   0) == pdTRUE) mode = 0;
+    else if (xSemaphoreTake(sharedData->semTempWarning,  0) == pdTRUE) mode = 1;
+    else if (xSemaphoreTake(sharedData->semTempCritical, 0) == pdTRUE) mode = 2;
+
+    // Chon duty va thoi gian theo mode
+    uint8_t  duty   = (mode == 0) ?  64 : (mode == 1) ? 160 : 255;
+    uint32_t on_ms  = (mode == 0) ? 1000 : (mode == 1) ? 500 : 200;
+    uint32_t off_ms = on_ms;
+
+    ledcWrite(LED_PWM_CH, duty);           // Bat LED
+    vTaskDelay(pdMS_TO_TICKS(on_ms));
+    ledcWrite(LED_PWM_CH, 0);             // Tat LED
+    vTaskDelay(pdMS_TO_TICKS(off_ms));
+}
+\end{lstlisting}
+
+Cơ chế non-blocking đảm bảo LED không bao giờ bị đóng băng: nếu cảm biến chưa có đọc mới (ví dụ lỗi I2C tạm thời), \texttt{mode} giữ nguyên giá trị trước và LED tiếp tục nhấp nháy theo hành vi đã biết.
+
+\subsubsection*{Cấu hình PWM phần cứng}
+
+\begin{lstlisting}[language=c, caption=Khởi tạo LEDC PWM cho LED đơn (trích led\_blinky.cpp)]
+static const uint8_t  LED_PWM_CH   = 0;    // LEDC channel 0
+static const uint32_t LED_PWM_FREQ = 5000; // 5 kHz -- tren nguong nhan nhai mat nguoi
+static const uint8_t  LED_PWM_RES  = 8;    // 8-bit: pham vi duty 0..255
+
+ledcSetup(LED_PWM_CH, LED_PWM_FREQ, LED_PWM_RES);
+ledcAttachPin(LED_GPIO, LED_PWM_CH); // GPIO 48 -- LED tich hop YoloUNO
+\end{lstlisting}
+
+Tần số 5\,kHz đảm bảo ánh sáng LED mượt mà, không rung, đồng thời phân giải 8-bit cung cấp 256 mức sáng -- đủ để tạo độ phân biệt trực quan rõ ràng giữa ba vùng nhiệt độ.
+
+\subsubsection*{Quan hệ với các task khác -- tách semaphore theo consumer}
+
+Task 1 dùng bộ semaphore \texttt{semTempNormal/Warning/Critical} riêng biệt, \textit{không dùng chung} với bộ semaphore \texttt{semNormal/Warning/Critical} phục vụ Task 3 (hiển thị LCD). Cả hai bộ đều được phát bởi cùng một producer là \texttt{temp\_humi}, nhưng với định nghĩa ngưỡng khác nhau:
+
+\begin{table}[h!]
+\centering
+\caption{So sánh bộ semaphore Task 1 và Task 3 -- cùng producer, khác ngưỡng}
+\label{tab:task1-vs-task3-sem}
+\begin{tabular}{|c|c|c|}
+\hline
+\textbf{Semaphore} & \textbf{Ngưỡng phát} & \textbf{Consumer} \\
+\hline
+\texttt{semTempNormal}   & $T < 26\,^\circ\mathrm{C}$               & \texttt{led\_blinky} (Task 1) \\
+\texttt{semTempWarning}  & $26 \leq T \leq 28\,^\circ\mathrm{C}$   & \texttt{led\_blinky} (Task 1) \\
+\texttt{semTempCritical} & $T > 28\,^\circ\mathrm{C}$               & \texttt{led\_blinky} (Task 1) \\
+\hline
+\texttt{semNormal}   & $20 \leq T < 30\,^\circ\mathrm{C}$           & \texttt{displayLCD} (Task 3) \\
+\texttt{semWarning}  & $30 \leq T < 38$ hoặc $7 \leq T < 20\,^\circ\mathrm{C}$ & \texttt{displayLCD} (Task 3) \\
+\texttt{semCritical} & $T < 7$ hoặc $T \geq 38\,^\circ\mathrm{C}$  & \texttt{displayLCD} (Task 3) \\
+\hline
+\end{tabular}
+\end{table}
+
+Thiết kế này ngăn chặn tình trạng một consumer ``ăn cắp'' tín hiệu của consumer kia, đảm bảo Task 1 và Task 3 hoạt động hoàn toàn độc lập dù cùng đọc dữ liệu từ một nguồn.
+
+\subsubsection*{Điểm nhấn kỹ thuật của Task 1}
+
+\begin{itemize}
+    \item \textbf{Giao tiếp không biến toàn cục}: toàn bộ thông tin trạng thái nhiệt độ được truyền qua semaphore -- \texttt{mode} là biến cục bộ trong stack của \texttt{led\_blinky}, không tồn tại trong vùng toàn cục.
+    \item \textbf{Khả năng chịu lỗi}: cơ chế non-blocking trytake giúp LED duy trì hành vi cuối cùng khi cảm biến tạm thời không đọc được, không làm treo task.
+    \item \textbf{Tách biệt hoàn toàn}: Task 1 không trực tiếp đọc biến \texttt{temperature} trong \texttt{SharedData}, mà chỉ nhận tín hiệu từ semaphore -- đảm bảo không cần thêm mutex bảo vệ dữ liệu đo.
+    \item \textbf{PWM phần cứng}: duty cycle do LEDC hardware duy trì độc lập với vòng lặp phần mềm, tách biệt carrier frequency và blink period.
+\end{itemize}
+
+\subsubsection*{Tổng kết Task 1}
+
+Task 1 đã đáp ứng đầy đủ yêu cầu của đề bài: có ít nhất ba hành vi nhấp nháy tương ứng ba khoảng nhiệt độ, sử dụng semaphore để đồng bộ giữa task cảm biến và task LED, và không tạo thêm biến toàn cục mới. Kết quả là hệ thống có một kênh cảnh báo trực quan liên tục -- LED nhấp nháy với cường độ và tần suất tăng dần theo nhiệt độ -- hoạt động song song và không xung đột với các task còn lại của hệ thống.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \subsection{Task 3 - Theo dõi nhiệt độ và độ ẩm với màn hình LCD}
@@ -399,3 +553,303 @@ Tính năng mở rộng này giúp hệ thống vượt khỏi mô hình đơn t
     \item triển khai kiến trúc event-driven trong LAN,
     \item và thiết kế hệ cảnh báo tách rời cảm biến/chấp hành để dễ mở rộng thành mạng IoT nhiều node.
 \end{itemize}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Task 5 -- Triển khai TinyML và đánh giá độ chính xác}
+
+Task 5 hiện thực một pipeline TinyML hoàn chỉnh từ sinh dữ liệu huấn luyện, xây dựng và lượng tử hóa mô hình, đến triển khai suy luận trực tiếp trên ESP32-S3 qua TensorFlow Lite for Microcontrollers (TFLM). Mục tiêu là phân loại trạng thái môi trường thành ba nhãn dựa trên cặp đo nhiệt độ--độ ẩm từ cảm biến DHT20 và đánh giá độ chính xác của mô hình trên phần cứng thực.
+
+\subsubsection*{Mô tả tập dữ liệu}
+
+Do hạn chế về thời gian thu thập dữ liệu thực, nhóm sử dụng dữ liệu tổng hợp (synthetic data) được sinh bằng script \texttt{generate\_dataset.py} với hạt nhân ngẫu nhiên cố định (\texttt{seed = 42}) để đảm bảo tính tái lập.
+
+\textbf{Đặc tả bộ dữ liệu:}
+\begin{itemize}
+    \item File đầu ra: \texttt{sensor\_data.csv} -- 1\,800 mẫu, không có dòng tiêu đề.
+    \item Định dạng: phân cách bằng khoảng trắng, mỗi dòng gồm \texttt{temperature humidity label}.
+    \item Phân bố lớp: cân bằng hoàn hảo, 600 mẫu cho mỗi lớp.
+\end{itemize}
+
+\begin{table}[h!]
+\centering
+\caption{Định nghĩa ba lớp và chiến lược sinh dữ liệu}
+\label{tab:task5-dataset}
+\begin{tabular}{|c|p{3cm}|p{3.8cm}|p{3.8cm}|}
+\hline
+\textbf{Nhãn} & \textbf{Lớp} & \textbf{Khoảng nhiệt độ} & \textbf{Khoảng độ ẩm} \\
+\hline
+0 & Normal (Bình thường) & 22--32\,°C,\newline N(27, $\sigma$=2.5) & 45--75\,\%,\newline N(60, $\sigma$=7) \\
+\hline
+1 & Temp Anomaly (Bất thường nhiệt độ) & $-$10--60\,°C bimodal:\newline N(45,$\sigma$=3.5) $\cup$ N(5,$\sigma$=2) & 20--90\,\%,\newline N(55,$\sigma$=10) \\
+\hline
+2 & Humidity Anomaly (Bất thường độ ẩm) & $-$5--50\,°C,\newline N(27,$\sigma$=6) & 0--100\,\% bimodal:\newline N(95,$\sigma$=2.5) $\cup$ N(10,$\sigma$=4) \\
+\hline
+\end{tabular}
+\end{table}
+
+Lớp Normal mô phỏng điều kiện phòng thông thường với phân phối Gaussian đơn. Lớp Temp Anomaly dùng phân phối lưỡng đỉnh (bimodal) để bao phủ cả hai kịch bản bất thường nhiệt độ cao và thấp. Lớp Humidity Anomaly tương tự bao phủ cả hai trường hợp quá ẩm và quá khô. Ba lớp này có vùng phân phối tách biệt rõ ràng, đảm bảo khả năng phân tách tốt cho mô hình nhỏ.
+
+\textbf{Gán nhãn tự động:} nhãn được gán xác định ngay trong quá trình sinh dữ liệu -- mỗi hàm generator chỉ tạo mẫu cho đúng một lớp, loại bỏ hoàn toàn sai sót gán nhãn thủ công.
+
+\subsubsection*{Kiến trúc mô hình và tiền xử lý}
+
+\paragraph{Mô hình mạng nơ-ron}
+Nhóm lựa chọn mạng nơ-ron Dense nhỏ (fully-connected) tối ưu cho tài nguyên MCU:
+
+\begin{center}
+\texttt{Input(2)} $\rightarrow$ \texttt{Dense(16, ReLU)} $\rightarrow$ \texttt{Dense(12, ReLU)} $\rightarrow$ \texttt{Dense(3, Softmax)}
+\end{center}
+
+\begin{table}[h!]
+\centering
+\caption{Tổng hợp tham số mô hình}
+\label{tab:task5-model}
+\begin{tabular}{|c|c|c|c|}
+\hline
+\textbf{Tầng} & \textbf{Đầu ra} & \textbf{Hàm kích hoạt} & \textbf{Tham số} \\
+\hline
+Input & (2,) & -- & 0 \\
+Dense 1 & (16,) & ReLU & 48 \\
+Dense 2 & (12,) & ReLU & 204 \\
+Dense 3 (output) & (3,) & Softmax & 39 \\
+\hline
+\textbf{Tổng} & & & \textbf{291} \\
+\hline
+\end{tabular}
+\end{table}
+
+Tổng cộng 291 tham số huấn luyện giúp model TFLite int8 có kích thước chỉ khoảng 2,9\,KB sau lượng tử hóa -- hoàn toàn phù hợp với bộ nhớ Flash và SRAM của ESP32-S3.
+
+\paragraph{Tiền xử lý -- MinMax Scaling}
+Đặc trưng đầu vào được chuẩn hóa về $[0, 1]$ bằng MinMax Scaler, chỉ khớp (fit) trên tập huấn luyện và áp dụng nhất quán trên tập kiểm thử lẫn firmware MCU:
+
+\begin{equation}
+x_{\text{scaled}} = \frac{x_{\text{raw}} - x_{\min}}{x_{\max} - x_{\min}}, \quad \text{giới hạn trong } [0, 1]
+\label{eq:minmax}
+\end{equation}
+
+Tham số scaler được lưu vào \texttt{output/scaler\_params.json} và nhúng trực tiếp vào firmware dưới dạng hằng số:
+
+\begin{table}[h!]
+\centering
+\caption{Tham số MinMax Scaler (trích scaler\_params.json)}
+\label{tab:task5-scaler}
+\begin{tabular}{|c|c|c|}
+\hline
+\textbf{Đặc trưng} & \textbf{data\_min} & \textbf{data\_max} \\
+\hline
+Nhiệt độ (°C) & $-0.84270$ & $54.02898$ \\
+Độ ẩm (\%) & $0.00000$ & $100.00000$ \\
+\hline
+\end{tabular}
+\end{table}
+
+MinMax được chọn vì công thức tính (phép trừ + chia) có thể triển khai trực tiếp bằng C thuần túy mà không cần hàm toán học phức tạp, đặc biệt phù hợp cho MCU tài nguyên hạn chế.
+
+\subsubsection*{Quy trình huấn luyện và chuyển đổi mô hình}
+
+\paragraph{Cấu hình huấn luyện}
+\begin{table}[h!]
+\centering
+\caption{Siêu tham số huấn luyện (train\_and\_convert.py)}
+\label{tab:task5-training}
+\begin{tabular}{|c|c|}
+\hline
+\textbf{Tham số} & \textbf{Giá trị} \\
+\hline
+Optimizer & Adam (lr = 0.001 mặc định) \\
+Hàm mất mát & Sparse categorical cross-entropy \\
+Số epoch tối đa & 80 \\
+Batch size & 32 \\
+Dừng sớm & patience = 8, theo dõi val\_loss \\
+Tỉ lệ train/test & 80\% / 20\% phân tầng theo lớp \\
+\hline
+\end{tabular}
+\end{table}
+
+\paragraph{Lượng tử hóa int8 toàn phần (Post-Training Quantization)}
+Sau huấn luyện, mô hình được lượng tử hóa toàn phần sang int8 bằng TFLite Converter với tập dữ liệu đại diện gồm 100 mẫu từ tập huấn luyện để hiệu chỉnh tham số lượng tử hóa:
+
+\begin{lstlisting}[language=Python, caption=Cấu hình lượng tử hóa int8 (trích train\_and\_convert.py)]
+converter.optimizations = [tf.lite.Optimize.DEFAULT]
+converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+converter.inference_input_type  = tf.int8
+converter.inference_output_type = tf.int8
+\end{lstlisting}
+
+Sau lượng tử hóa, model được chuyển thành mảng C (\texttt{model\_data.h}) để nhúng vào bộ nhớ Flash của firmware theo phương pháp lưu trực tiếp vào bộ nhớ chương trình.
+
+\paragraph{Các tập tin đầu ra của pipeline}
+
+\begin{table}[h!]
+\centering
+\caption{Danh sách tập tin đầu ra sau huấn luyện}
+\label{tab:task5-artifacts}
+\begin{tabular}{|l|p{8cm}|}
+\hline
+\textbf{Tập tin} & \textbf{Mô tả} \\
+\hline
+\texttt{output/model.h5} & Mô hình Keras float32 đã huấn luyện \\
+\texttt{output/model\_int8.tflite} & Mô hình TFLite lượng tử hóa ($\approx$2,9\,KB) \\
+\texttt{output/model\_data.h} & Mảng C \texttt{unsigned char} nhúng vào Flash \\
+\texttt{output/scaler\_params.json} & Tham số MinMax Scaler \\
+\texttt{output/metrics.txt} & Độ chính xác, ma trận nhầm lẫn, báo cáo phân lớp \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsubsection*{Đánh giá độ chính xác trên PC}
+
+\paragraph{Mô hình Keras float32}
+Kết quả đánh giá trên tập kiểm thử (360 mẫu, chiến lược phân tầng):
+
+\begin{lstlisting}[language=, caption=Kết quả đánh giá từ metrics.txt]
+Test accuracy: 1.0000
+
+Confusion matrix:
+[[120   0   0]
+ [  0 120   0]
+ [  0   0 120]]
+
+Classification report:
+                 precision    recall  f1-score   support
+         Normal     1.0000    1.0000    1.0000       120
+    TempAnomaly     1.0000    1.0000    1.0000       120
+HumidityAnomaly     1.0000    1.0000    1.0000       120
+       accuracy                         1.0000       360
+\end{lstlisting}
+
+Độ chính xác 100\% trên tập kiểm thử là kết quả dự kiến vì các phân phối lớp trong dữ liệu tổng hợp tách biệt hoàn toàn về mặt hình học trong không gian đặc trưng 2 chiều (nhiệt độ, độ ẩm).
+
+\paragraph{Mô hình TFLite int8 (evaluate\_tflite.py)}
+Script \texttt{evaluate\_tflite.py} tái hiện chính xác pipeline suy luận MCU trên PC bằng cách dùng \texttt{tf.lite.Interpreter}, áp dụng cùng MinMax scaling từ \texttt{scaler\_params.json}, lượng tử hóa đầu vào và phản lượng tử hóa đầu ra theo đúng tham số tensor:
+
+\begin{center}
+\textbf{Kết quả: TFLite accuracy = 1.0000 (360/360 mẫu đúng)}
+\end{center}
+
+Mô hình int8 cho kết quả đồng nhất với mô hình float32, xác nhận quá trình lượng tử hóa không gây suy giảm độ chính xác trên bộ dữ liệu này.
+
+\paragraph{Kiểm thử theo kịch bản (mock\_scenarios.py)}
+Nhóm xây dựng 18 kịch bản thủ công để kiểm tra hành vi tại các vùng đặc trưng:
+
+\begin{table}[h!]
+\centering
+\caption{Tổng hợp kết quả kiểm thử kịch bản (mock\_scenarios.py)}
+\label{tab:task5-scenarios}
+\begin{tabular}{|l|c|p{5.5cm}|}
+\hline
+\textbf{Nhóm kịch bản} & \textbf{Số test} & \textbf{Mẫu đại diện} \\
+\hline
+Normal & 2 & T=26,5°C/H=60\%, T=29°C/H=55\% \\
+Temp Anomaly -- cao & 2 & T=45°C, T=50°C \\
+Temp Anomaly -- thấp & 2 & T=5°C, T=8°C \\
+Humidity Anomaly -- cao & 2 & H=95\%, H=98\% \\
+Humidity Anomaly -- thấp & 2 & H=10\%, H=15\% \\
+Biên giới (boundary) & 6 & Giá trị tại các ngưỡng clip \\
+Cực trị hỗn hợp & 2 & Đồng thời bất thường T và H \\
+\hline
+\textbf{Tổng} & \textbf{18} & \textbf{Passed: 18/18} \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsubsection*{Triển khai suy luận trên ESP32-S3}
+
+\paragraph{Kiến trúc tích hợp firmware}
+Mảng C \texttt{model\_tflite[]} từ \texttt{model\_data.h} được nhúng vào bộ nhớ Flash (phân đoạn \texttt{.rodata}), không cần hệ thống file. TFLM được cấu hình trong cặp file \texttt{tinyML.h/.cpp}. Tensor arena -- bộ đệm tĩnh cấp phát trong SRAM để chứa các activation trung gian -- có kích thước 8\,KB:
+
+\begin{lstlisting}[language=c, caption=Khai báo tensor arena và khởi tạo TFLM (trích tinyML.cpp)]
+constexpr int kTensorArenaSize = 8 * 1024; // 8 KB -- du cho mang Dense 3 tang int8
+
+alignas(16) uint8_t tensor_arena[kTensorArenaSize];
+
+bool initTinyML() {
+    error_reporter = tflite::GetMicroErrorReporter();
+    model = tflite::GetModel(model_tflite);
+    // Kiem tra phien ban schema
+    static tflite::AllOpsResolver resolver;
+    static tflite::MicroInterpreter static_interpreter(
+        model, resolver, tensor_arena, kTensorArenaSize);
+    interpreter = &static_interpreter;
+    if (interpreter->AllocateTensors() != kTfLiteOk) return false;
+    input  = interpreter->input(0);
+    output = interpreter->output(0);
+    return true;
+}
+\end{lstlisting}
+
+\paragraph{Đồng bộ hóa với task cảm biến qua semaphore}
+Task \texttt{tinyMLTask} (stack 6\,144 bytes, ưu tiên 1) đồng bộ với task \texttt{temp\_humi} qua binary semaphore \texttt{semDataReady}. Sau mỗi lần đọc DHT20 thành công, \texttt{temp\_humi} gọi \texttt{xSemaphoreGive(semDataReady)}; \texttt{tinyMLTask} chặn tại \texttt{xSemaphoreTake(semDataReady, portMAX\_DELAY)} và chỉ tiến hành suy luận khi có dữ liệu mới:
+
+\begin{lstlisting}[language=c, caption=Vòng lặp suy luận TinyML với đồng bộ semaphore (trích tinyML.cpp)]
+while (1) {
+    // Cho tin hieu du lieu moi tu task cam bien
+    if (xSemaphoreTake(sharedData->semDataReady, portMAX_DELAY) == pdTRUE) {
+        // Lay gia tri do qua mutex
+        if (xSemaphoreTake(sharedData->mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+            curr_t = sharedData->avg_temp;
+            curr_h = sharedData->avg_humi;
+            xSemaphoreGive(sharedData->mutex);
+        }
+        // Chuan hoa dau vao (MinMax)
+        scale_inputs(curr_t, curr_h, &t_scaled, &h_scaled);
+        // Luong tu hoa float -> int8
+        input->data.int8[0] = quantize_input(t_scaled, in_scale, in_zero);
+        input->data.int8[1] = quantize_input(h_scaled, in_scale, in_zero);
+        // Suy luan
+        interpreter->Invoke();
+        // Phan luong tu hoa int8 -> float, lay argmax
+        // Ghi nhan vao sharedData->mlLabel qua mutex
+    }
+}
+\end{lstlisting}
+
+Cơ chế \texttt{portMAX\_DELAY} đảm bảo \texttt{tinyMLTask} không tiêu tốn CPU khi không có dữ liệu mới -- phù hợp với chu kỳ đo 5\,000\,ms của DHT20.
+
+\paragraph{Lượng tử hóa và phản lượng tử hóa trên MCU}
+TFLite int8 sử dụng phép biến đổi affine với tham số scale và zero\_point đọc trực tiếp từ metadata tensor:
+
+\begin{lstlisting}[language=c, caption=Hàm lượng tử hóa và phản lượng tử hóa trên MCU (trích tinyML.cpp)]
+// Luong tu hoa: float -> int8
+static int8_t quantize_input(float value, float scale, int zero_point) {
+    const float q = value / scale + (float)zero_point;
+    int32_t qi = (int32_t)lroundf(q);
+    if (qi < -128) qi = -128;
+    if (qi >  127) qi =  127;
+    return (int8_t)qi;
+}
+// Phan luong tu hoa: int8 -> float xac suat
+static float dequantize_output(int8_t value, float scale, int zero_point) {
+    return (float)(value - zero_point) * scale;
+}
+\end{lstlisting}
+
+Nhãn dự đoán (\texttt{mlLabel}) được ghi vào \texttt{SharedData} qua \texttt{mutex} và có thể được sử dụng bởi các task khác như màn hình LCD hoặc NeoPixel để hiển thị trạng thái phân loại.
+
+\subsubsection*{Thảo luận và đánh giá kết quả}
+
+\paragraph{Phân tích kết quả đánh giá}
+
+\begin{itemize}
+    \item \textbf{Lớp nào sai nhiều nhất?} Không có lớp nào bị phân loại sai trên cả ba bộ đánh giá (float32, int8 trên PC, kịch bản biên giới). Điều này cho thấy mô hình Dense với 291 tham số đủ năng lực phân tách ba lớp dữ liệu tổng hợp có cấu trúc rõ ràng.
+
+    \item \textbf{Lỗi có tập trung tại biên ngưỡng không?} Không. Kiểm thử 6 kịch bản biên giới trong \texttt{mock\_scenarios.py} đều cho kết quả đúng, kể cả các điểm tại giá trị clip cực đại (T=$-10$°C, T=60°C, H=0\%, H=100\%).
+
+    \item \textbf{Độ chính xác trên thiết bị thấp hơn offline không?} Không quan sát thấy sự suy giảm. Mô hình int8 cho độ chính xác tương đương mô hình float32 vì khoảng cách giữa các lớp trong dữ liệu tổng hợp đủ lớn để sai số lượng tử hóa (±1 LSB) không gây phân loại sai.
+
+    \item \textbf{Dự đoán có bất ổn theo thời gian không?} Không. Mỗi lần suy luận độc lập, không có trạng thái thời gian. Độ tin cậy đầu ra cao (ví dụ P(Normal) $> 0.99$ với T=26,5°C/H=60\%).
+\end{itemize}
+
+\paragraph{Hạn chế}
+
+\begin{itemize}
+    \item \textbf{Khoảng cách synthetic-to-real}: Dữ liệu tổng hợp có phân phối lý tưởng, không phản ánh nhiễu đo thực tế của DHT20 ($\pm$0,5°C, $\pm$3\%RH). Độ chính xác thực tế trên dữ liệu cảm biến thật dự kiến sẽ thấp hơn 100\%.
+    \item \textbf{Không có mô hình thời gian}: Mỗi lần suy luận xử lý độc lập một điểm đo -- các bất thường phát triển dần (drift) có thể bị bỏ sót.
+    \item \textbf{Hằng số scaler cứng}: \texttt{kDataMin/kDataMax} là hằng số compile-time; khi triển khai môi trường thực cần cập nhật lại và biên dịch lại firmware.
+\end{itemize}
+
+\subsubsection*{Tổng kết Task 5}
+
+Task 5 đã hoàn thành một pipeline TinyML khép kín và đúng yêu cầu đề bài: có mô tả tập dữ liệu và quy trình gán nhãn; mô hình được triển khai trực tiếp trên vi điều khiển; có đánh giá độ chính xác trên cả PC (float32 và int8) lẫn kịch bản thực; có thảo luận về nguyên nhân kết quả và các giới hạn khi áp dụng thực tế. Cơ chế đồng bộ \texttt{semDataReady} đảm bảo task TinyML hoạt động hiệu quả trong môi trường đa task của FreeRTOS, không gây tải dư thừa lên CPU.
+
