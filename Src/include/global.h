@@ -12,6 +12,11 @@ struct SharedData
     // --- Sensor Data ---
     float temperature;
     float humidity;
+    float avg_temp;
+    float avg_humi;
+
+    // --- TinyML Classification ---
+    uint8_t mlLabel; // 0=Normal, 1=TempAnomaly, 2=HumidityAnomaly
 
     // --- LED RGB NeoPixel State ---
     bool     ledOn;
@@ -40,6 +45,14 @@ struct SharedData
     SemaphoreHandle_t semNormal;
     SemaphoreHandle_t semWarning;
     SemaphoreHandle_t semCritical;
+
+    // --- Semaphores for Task 1/3 (separate consumers) ---
+    SemaphoreHandle_t semTempNormal;
+    SemaphoreHandle_t semTempWarning;
+    SemaphoreHandle_t semTempCritical;
+
+    // Handoff signal, sensor -> ML
+    SemaphoreHandle_t semDataReady;
 };
 
 // Global instance
