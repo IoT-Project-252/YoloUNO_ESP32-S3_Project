@@ -6,6 +6,7 @@
 #include "web_server.h"
 #include "pir_mqtt.h"
 #include "task_wifi.h"
+#include "task_coreiot.h"
 #include "led_blinky.h"
 #include "tinyML.h"
 
@@ -36,6 +37,9 @@ void setup()
 
     // Task 6: WiFi monitoring task
     xTaskCreate(WiFi_connect, "WiFi Connect", 4096, projectSharedData, 1, NULL);
+
+    // Task 6: Data Publishing to CoreIOT Cloud Server
+    xTaskCreate(CoreIoT_Task, "CoreIOT Task", 8192, projectSharedData, 2, NULL);
 
     // MQTT Extension: PIR sensor detection + MQTT publish
     // This task waits for WiFi STA before connecting to MQTT broker.
