@@ -55,6 +55,8 @@ void temp_humi(void *pvParameters)
         {
             sharedData->temperature = t;
             sharedData->humidity = h;
+            sharedData->avg_temp = t;
+            sharedData->avg_humi = h;
             xSemaphoreGive(sharedData->mutex);
 
             // // SERIAL MUTEX PROTECTION: Prevent interleaved text output
@@ -86,6 +88,18 @@ void temp_humi(void *pvParameters)
             xSemaphoreGive(sharedData->semCritical);
             stateStr = "Critical";
         }
+
+        // Task 1: Temperature thresholds for LED blink (<26, 26-28, >28)
+        if (t < 26.0f) {
+            xSemaphoreGive(sharedData->semTempNormal);
+        } else if (t <= 28.0f) {
+            xSemaphoreGive(sharedData->semTempWarning);
+        } else {
+            xSemaphoreGive(sharedData->semTempCritical);
+        }
+
+        // TinyML: signal new sensor data ready
+        xSemaphoreGive(sharedData->semDataReady);
 
         // SERIAL MUTEX PROTECTION: Combine output into a single atomic print and flush
         if (xSemaphoreTake(sharedData->serialMutex, portMAX_DELAY) == pdTRUE) 

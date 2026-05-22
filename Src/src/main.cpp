@@ -6,6 +6,8 @@
 #include "web_server.h"
 #include "pir_mqtt.h"
 #include "task_wifi.h"
+#include "led_blinky.h"
+#include "tinyML.h"
 
 void setup() 
 {
@@ -18,6 +20,8 @@ void setup()
     xTaskCreate(temp_humi, "Task Read Temperature & Humidity", 4096, projectSharedData, 1, NULL);
     xTaskCreate(controlNeoLED, "Task Neo LED", 4096, projectSharedData, 1, NULL);
     xTaskCreate(displayLCD, "Display on LCD", 4096, projectSharedData, 1, NULL);
+    xTaskCreate(led_blinky, "Task LED Blinky", 2048, projectSharedData, 1, NULL);
+    xTaskCreate(tinyMLTask, "TinyML", 6144, projectSharedData, 1, NULL);
     // Task 3: Temperature & Humidity sensor reading
     // xTaskCreate(temp_humi,      "TempHumi",    4096, projectSharedData, 1, NULL);
 

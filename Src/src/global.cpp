@@ -38,4 +38,10 @@ void initGlobalData()
     projectSharedData->semNormal   = xSemaphoreCreateBinary();
     projectSharedData->semWarning  = xSemaphoreCreateBinary();
     projectSharedData->semCritical = xSemaphoreCreateBinary();
+
+    projectSharedData->semTempNormal   = xSemaphoreCreateBinary();
+    projectSharedData->semTempWarning  = xSemaphoreCreateBinary();
+    projectSharedData->semTempCritical = xSemaphoreCreateBinary();
+
+    projectSharedData->semDataReady = xSemaphoreCreateBinary();
 }
