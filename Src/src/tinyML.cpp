@@ -18,6 +18,7 @@ namespace {
 // Scaler params from tinyML/output/scaler_params.json
 static const float kDataMin[2] = {-0.8427000f, 0.0f};
 static const float kDataMax[2] = {54.028980f, 100.0f};
+static const bool kApplyActuators = false;
 
 static void scale_inputs(float temp_raw, float hum_raw, float* out_t, float* out_h)
 {
@@ -64,8 +65,7 @@ static void apply_actuators(SharedData* sd, uint8_t label)
 
 // Interpreter initialization function
 bool initTinyML() {
-    static tflite::MicroErrorReporter micro_error_reporter;
-    error_reporter = &micro_error_reporter;
+    error_reporter = tflite::GetMicroErrorReporter();
 
     model = tflite::GetModel(model_tflite);
     if (model->version() != TFLITE_SCHEMA_VERSION) {
@@ -76,7 +76,7 @@ bool initTinyML() {
 
     static tflite::AllOpsResolver resolver;
     static tflite::MicroInterpreter static_interpreter(
-        model, resolver, tensor_arena, kTensorArenaSize, error_reporter);
+        model, resolver, tensor_arena, kTensorArenaSize);
     interpreter = &static_interpreter;
 
     if (interpreter->AllocateTensors() != kTfLiteOk) {
@@ -154,7 +154,9 @@ void tinyMLTask(void* pvParameters) {
             }
 
             if (label != last_label) {
-                apply_actuators(sharedData, label);
+                if (kApplyActuators) {
+                    apply_actuators(sharedData, label);
+                }
                 last_label = label;
             }
 

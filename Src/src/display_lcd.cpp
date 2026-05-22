@@ -31,55 +31,99 @@ void displayLCD(void *pvParameters)
         xSemaphoreGive(sharedData->i2cMutex);
     }
 
-    float localTemp = 0.0f;
-    float localHum = 0.0f;
-    uint8_t state = 1; // 0: Normal, 1: Warning, 2: Critical
+    // Local variables to cache sensor data
+    // This minimizes the time the data mutex is held, reducing task blocking time
+    float localTemp = 0.0;
+    float localHum = 0.0;
 
+    // Main infinite loop for the display task
     while (1) 
     {
-        if (xSemaphoreTake(sharedData->mutex, pdMS_TO_TICKS(50)) == pdTRUE) 
+        
+        // --- NORMAL STATE HANDLING ---
+        // Check if the 'Normal' state semaphore is available (0 ticks = non-blocking)
+        if (xSemaphoreTake(sharedData->semNormal, 0) == pdTRUE) 
         {
-            localTemp = sharedData->temperature;
-            localHum = sharedData->humidity;
-            xSemaphoreGive(sharedData->mutex);
+            
+            // DATA MUTEX: Securely read the latest temperature and humidity values
+            if (xSemaphoreTake(sharedData->mutex, pdMS_TO_TICKS(50)) == pdTRUE) 
+            {
+                localTemp = sharedData->temperature;
+                localHum = sharedData->humidity;
+                xSemaphoreGive(sharedData->mutex);
+            }
+            
+            // I2C MUTEX PROTECTION: Safely update the LCD with 'Normal' UI
+            if (xSemaphoreTake(sharedData->i2cMutex, pdMS_TO_TICKS(100)) == pdTRUE) 
+            {
+                lcd.clear();
+                lcd.setCursor(0, 0); lcd.print("STATE: NORMAL  ");
+                lcd.setCursor(0, 1); lcd.print("T:"); lcd.print(localTemp, 1); lcd.print("C H:"); lcd.print(localHum, 0); lcd.print("%");
+                xSemaphoreGive(sharedData->i2cMutex);
+            }
         }
-
-        if (xSemaphoreTake(sharedData->semTempNormal, 0) == pdTRUE) {
-            state = 0;
-        } else if (xSemaphoreTake(sharedData->semTempWarning, 0) == pdTRUE) {
-            state = 1;
-        } else if (xSemaphoreTake(sharedData->semTempCritical, 0) == pdTRUE) {
-            state = 2;
-        }
-
-        const char* stateLine = "STATE: NORMAL";
-        if (state == 1) {
-            stateLine = "STATE: WARNING";
-        } else if (state == 2) {
-            stateLine = "STATE: CRITICAL";
-        }
-
-        if (xSemaphoreTake(sharedData->i2cMutex, pdMS_TO_TICKS(100)) == pdTRUE) 
+        
+        // --- WARNING STATE HANDLING ---
+        else if (xSemaphoreTake(sharedData->semWarning, 0) == pdTRUE) 
         {
-            lcd.clear();
-            lcd.setCursor(0, 0);
-            lcd.print(stateLine);
-            lcd.setCursor(0, 1);
-            lcd.print("T:"); lcd.print(localTemp, 1); lcd.print("C H:"); lcd.print(localHum, 0); lcd.print("%");
-            lcd.backlight();
-            xSemaphoreGive(sharedData->i2cMutex);
+            
+            // DATA MUTEX: Securely read the latest sensor values
+            if (xSemaphoreTake(sharedData->mutex, pdMS_TO_TICKS(50)) == pdTRUE) 
+            {
+                localTemp = sharedData->temperature;
+                localHum = sharedData->humidity;
+                xSemaphoreGive(sharedData->mutex);
+            }
+            
+            // I2C MUTEX PROTECTION: Safely update the LCD with 'Warning' UI
+            if (xSemaphoreTake(sharedData->i2cMutex, pdMS_TO_TICKS(100)) == pdTRUE) 
+            {
+                lcd.clear();
+                lcd.setCursor(0, 0); lcd.print("STATE: WARNING!");
+                lcd.setCursor(0, 1); lcd.print("T:"); lcd.print(localTemp, 1); lcd.print("C H:"); lcd.print(localHum, 0); lcd.print("%");
+                xSemaphoreGive(sharedData->i2cMutex);
+            }
         }
-
-        if (state == 2) {
-            vTaskDelay(pdMS_TO_TICKS(400));
+        
+        // --- CRITICAL STATE HANDLING ---
+        else if (xSemaphoreTake(sharedData->semCritical, 0) == pdTRUE) 
+        {
+            
+            // DATA MUTEX: Securely read the latest sensor values
+            if (xSemaphoreTake(sharedData->mutex, pdMS_TO_TICKS(50)) == pdTRUE) 
+            {
+                localTemp = sharedData->temperature;
+                localHum = sharedData->humidity;
+                xSemaphoreGive(sharedData->mutex);
+            }
+            
+            // I2C MUTEX PROTECTION: Safely update the LCD with 'Critical' UI
+            if (xSemaphoreTake(sharedData->i2cMutex, pdMS_TO_TICKS(100)) == pdTRUE) 
+            {
+                lcd.clear();
+                lcd.setCursor(0, 0); lcd.print("!!! CRITICAL !!!");
+                lcd.setCursor(0, 1); lcd.print("T:"); lcd.print(localTemp, 1); lcd.print("C");
+                xSemaphoreGive(sharedData->i2cMutex);
+            }
+            
+            // I2C MUTEX PROTECTION: Handle the blinking backlight effect
+            vTaskDelay(pdMS_TO_TICKS(500)); // Keep backlight on for 500ms
+            
             if (xSemaphoreTake(sharedData->i2cMutex, portMAX_DELAY) == pdTRUE) 
             {
                 lcd.noBacklight();
                 xSemaphoreGive(sharedData->i2cMutex);
             }
-            vTaskDelay(pdMS_TO_TICKS(200));
+            
+            vTaskDelay(pdMS_TO_TICKS(200)); // Keep backlight off for 200ms
+            
+            if (xSemaphoreTake(sharedData->i2cMutex, portMAX_DELAY) == pdTRUE) 
+            {
+                lcd.backlight();
+                xSemaphoreGive(sharedData->i2cMutex);
+            }
         }
 
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(50));
     }
 }

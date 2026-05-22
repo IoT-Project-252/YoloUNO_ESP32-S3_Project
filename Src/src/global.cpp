@@ -11,9 +11,6 @@ void initGlobalData()
     // Sensor defaults
     projectSharedData->temperature = 0.0f;
     projectSharedData->humidity = 0.0f;
-    projectSharedData->avg_temp = 0.0f;
-    projectSharedData->avg_humi = 0.0f;
-    projectSharedData->mlLabel  = 0;
     
     // LED RGB defaults (off, black)
     projectSharedData->ledOn      = false;
@@ -41,19 +38,10 @@ void initGlobalData()
     projectSharedData->semNormal   = xSemaphoreCreateBinary();
     projectSharedData->semWarning  = xSemaphoreCreateBinary();
     projectSharedData->semCritical = xSemaphoreCreateBinary();
-    if (projectSharedData->semCritical == NULL) {
-        Serial.println("Lỗi (Startup): Không thể tạo semCritical");
-    }
 
-    projectSharedData->semTempNormal = xSemaphoreCreateCounting(2, 0);
-    projectSharedData->semTempWarning = xSemaphoreCreateCounting(2, 0);
-    projectSharedData->semTempCritical = xSemaphoreCreateCounting(2, 0);
+    projectSharedData->semTempNormal   = xSemaphoreCreateBinary();
+    projectSharedData->semTempWarning  = xSemaphoreCreateBinary();
+    projectSharedData->semTempCritical = xSemaphoreCreateBinary();
 
     projectSharedData->semDataReady = xSemaphoreCreateBinary();
-    if (projectSharedData->semDataReady == NULL) {
-        Serial.println("Lỗi (Startup): Không thể tạo semDataReady");
-    } else {
-        // Success log
-        Serial.println("Boot log: Khởi tạo thành công toàn bộ Mutex/Semaphore!");
-    }
 }
