@@ -7,6 +7,7 @@
 #include "actuators.h"
 #include "web_server.h"
 #include "pir_mqtt.h"
+#include "task_wifi.h"
 
 void setup() 
 {
@@ -33,6 +34,9 @@ void setup()
 
     // Task 4: Web server (AP mode + optional STA)
     xTaskCreate(webServerTask,  "WebServer",   8192, projectSharedData, 1, NULL);
+
+    // Task 6: WiFi monitoring task
+    xTaskCreate(WiFi_connect, "WiFi Connect", 4096, projectSharedData, 1, NULL);
 
     // MQTT Extension: PIR sensor detection + MQTT publish
     // This task waits for WiFi STA before connecting to MQTT broker.

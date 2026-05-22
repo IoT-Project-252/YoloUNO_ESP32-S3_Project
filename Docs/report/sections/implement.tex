@@ -1,7 +1,8 @@
 ﻿\newpage
 \section{Hiện thực}
 
-\subsection{Task 3 - Temperature and Humidity Monitoring with LCD Display}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Task 3 - Theo dõi nhiệt độ và độ ẩm với màn hình LCD}
 
 Task 3 tập trung vào ba yêu cầu cốt lõi của đề bài: (1) đo nhiệt độ/độ ẩm theo chu kỳ, (2) hiển thị ít nhất 3 trạng thái trên LCD dựa theo ngưỡng đo, và (3) loại bỏ các biến toàn cục rời rạc bằng mô hình dữ liệu dùng chung có đồng bộ trong FreeRTOS.
 
@@ -135,3 +136,266 @@ Riêng trạng thái \texttt{CRITICAL}, nhóm bổ sung hiệu ứng nhấp nhá
 
 Task 3 đã đáp ứng các yêu cầu bắt buộc của đề bài: có cơ chế phát semaphore theo điều kiện đo, có ít nhất 3 trạng thái hiển thị trên LCD, và dùng mô hình dữ liệu chia sẻ có bảo vệ mutex thay cho cách dùng biến toàn cục rời rạc. Kết quả là hệ thống chạy ổn định trong môi trường đa task và tạo nền tảng cho các task mở rộng ở các chương tiếp theo.
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Task 4 - Webserver ở chế độ Access Point}
+
+\subsubsection*{Mục tiêu và phạm vi}
+
+Task 4 được triển khai nhằm đáp ứng các yêu cầu của đề bài về giao diện web điều khiển thiết bị trong chế độ Access Point. Nhóm hiện thực theo kiến trúc:
+\begin{itemize}
+    \item ESP32-S3 tự phát WiFi AP để người dùng truy cập trực tiếp.
+    \item Dashboard hiển thị dữ liệu nhiệt độ/độ ẩm realtime.
+    \item Dashboard có hai cụm điều khiển: NeoPixel RGB và quạt PWM.
+    \item Trang \texttt{/settings} cho phép cấu hình STA để chuyển sang chế độ AP+STA.
+\end{itemize}
+
+\subsubsection*{Kiến trúc task và mô hình dữ liệu}
+
+Về mặt thiết kế, Task 4 gồm hai task chính:
+\begin{itemize}
+    \item \texttt{actuatorTask}: điều khiển phần cứng NeoPixel và quạt theo trạng thái trong \texttt{SharedData}.
+    \item \texttt{webServerTask}: chạy web server, xử lý route HTTP và cập nhật trạng thái điều khiển.
+\end{itemize}
+
+\begin{lstlisting}[language=c, caption=Khối tạo task Task 4 trong setup (trích main.cpp)]
+// xTaskCreate(actuatorTask,   "Actuators",   4096, projectSharedData, 1, NULL);
+xTaskCreate(webServerTask,  "WebServer",   8192, projectSharedData, 1, NULL);
+\end{lstlisting}
+
+Trong phiên bản hiện tại phục vụ kiểm thử MQTT mở rộng, nhóm đang giữ \texttt{webServerTask} hoạt động và tạm comment một số task khác (bao gồm \texttt{actuatorTask}) để cô lập luồng test. Khi demo đầy đủ Task 4, chỉ cần bật lại các lệnh \texttt{xTaskCreate(...)} tương ứng.
+
+Để đảm bảo thread-safety khi web callback và task phần cứng truy cập cùng dữ liệu, nhóm dùng:
+\begin{itemize}
+    \item \texttt{mutex}: bảo vệ dữ liệu cảm biến \texttt{temperature/humidity}.
+    \item \texttt{actuatorMutex}: bảo vệ trạng thái LED/quạt (\texttt{ledOn, ledR, ledG, ledB, fanOn, fanSpeed}).
+\end{itemize}
+
+\subsubsection*{Khởi tạo AP và chuyển đổi AP+STA}
+
+Khi khởi động, \texttt{webServerTask} đưa WiFi về chế độ AP và phát mạng cục bộ:
+\begin{lstlisting}[language=c, caption=Khởi tạo chế độ Access Point (trích web\_server.cpp)]
+WiFi.mode(WIFI_AP);
+WiFi.softAP(SSID_AP, PASS_AP);
+Serial.println("[WebServer] AP started.");
+Serial.print("[WebServer] AP IP: ");
+Serial.println(WiFi.softAPIP());
+\end{lstlisting}
+
+Khi người dùng gửi SSID/password từ trang \texttt{/settings}, API \texttt{/api/wifi} sẽ:
+\begin{enumerate}
+    \item chuyển sang \texttt{WIFI\_AP\_STA},
+    \item thử \texttt{WiFi.begin()},
+    \item cập nhật \texttt{staConnected} và \texttt{staSSID} nếu thành công,
+    \item nếu thất bại thì quay về \texttt{WIFI\_AP}.
+\end{enumerate}
+
+\subsubsection*{Thiết kế giao diện dashboard}
+
+Dashboard được render trực tiếp từ firmware bằng HTML/CSS/JS (dạng \texttt{RawLiteral}), gồm bốn card chức năng:
+\begin{itemize}
+    \item Card nhiệt độ.
+    \item Card độ ẩm.
+    \item Card điều khiển LED RGB (power + ba slider R/G/B + preview màu).
+    \item Card điều khiển quạt (power + slider tốc độ 0--100\%).
+\end{itemize}
+
+Frontend định kỳ gọi \texttt{/api/state} mỗi 3 giây để cập nhật dữ liệu và trạng thái kết nối STA.
+
+\subsubsection*{Thiết kế API điều khiển}
+
+Các endpoint chính của Task 4 được tổ chức như Bảng~\ref{tab:task4-api}.
+
+\begin{table}[h!]
+\centering
+\caption{Danh sách API chính của Task 4}
+\label{tab:task4-api}
+\begin{tabular}{|c|c|p{7cm}|}
+\hline
+\textbf{Endpoint} & \textbf{Method} & \textbf{Chức năng} \\
+\hline
+\texttt{/} & GET & Trả về trang dashboard \\
+\hline
+\texttt{/settings} & GET & Trả về trang cấu hình WiFi STA \\
+\hline
+\texttt{/api/state} & GET & Trả JSON trạng thái sensor + actuator + STA \\
+\hline
+\texttt{/api/led} & GET & Cập nhật \texttt{on,r,g,b} cho NeoPixel \\
+\hline
+\texttt{/api/fan} & GET & Cập nhật \texttt{on,speed} cho quạt PWM \\
+\hline
+\texttt{/api/wifi} & POST & Nhận JSON SSID/password và thử kết nối STA \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{lstlisting}[language=c, caption=Route điều khiển LED và quạt (trích web\_server.cpp)]
+server.on("/api/led", HTTP_GET, [sd](AsyncWebServerRequest *req) {
+    if (xSemaphoreTake(sd->actuatorMutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        if (req->hasParam("on"))  sd->ledOn = req->getParam("on")->value().toInt();
+        if (req->hasParam("r"))   sd->ledR  = constrain(req->getParam("r")->value().toInt(), 0, 255);
+        if (req->hasParam("g"))   sd->ledG  = constrain(req->getParam("g")->value().toInt(), 0, 255);
+        if (req->hasParam("b"))   sd->ledB  = constrain(req->getParam("b")->value().toInt(), 0, 255);
+        sd->ledChanged = true;
+        xSemaphoreGive(sd->actuatorMutex);
+    }
+    req->send(200, "application/json", "{\"ok\":true}");
+});
+\end{lstlisting}
+
+\subsubsection*{Task actuator và đồng bộ phần cứng}
+
+\texttt{actuatorTask} polling trạng thái từ \texttt{SharedData} mỗi 50ms và chỉ ghi xuống phần cứng khi có thay đổi:
+\begin{itemize}
+    \item NeoPixel: dùng \texttt{Adafruit\_NeoPixel}, bật/tắt hoặc đổi màu theo \texttt{ledOn/R/G/B}.
+    \item Fan: dùng LEDC PWM 25kHz, ánh xạ tốc độ 0--100\% sang duty 0--255.
+\end{itemize}
+
+\begin{lstlisting}[language=c, caption=Điều khiển quạt PWM theo tốc độ phần trăm (trích actuators.cpp)]
+uint32_t duty = 0;
+if (curFanOn) {
+    duty = map(curFanSpeed, 0, 100, 0, 255);
+}
+ledcWrite(FAN_PWM_CHANNEL, duty);
+\end{lstlisting}
+
+\subsubsection*{Kết quả đạt được của Task 4}
+
+Phần hiện thực Task 4 đáp ứng đầy đủ yêu cầu đề bài:
+\begin{itemize}
+    \item Web server chạy ở AP mode, giao diện điều khiển trực quan.
+    \item Có ít nhất hai cụm điều khiển thiết bị (LED RGB và quạt).
+    \item Có trang \texttt{/settings} để nhập thông tin WiFi STA.
+    \item Hỗ trợ chuyển sang AP+STA để mở rộng các chức năng mạng phía sau.
+\end{itemize}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Task mở rộng - Giao tiếp 2 thiết bị qua Local MQTT Broker}
+
+\subsubsection*{Mục tiêu mở rộng}
+
+Nhóm mở rộng hệ thống theo hướng giao tiếp hai vi điều khiển qua local MQTT broker (Mosquitto):
+\begin{itemize}
+    \item Thiết bị A (YoloUNO ESP32-S3): đọc cảm biến PIR và publish sự kiện chuyển động.
+    \item Thiết bị B (ESP32-S3 DevKitC-1): subscribe sự kiện, kích hoạt buzzer 5V cảnh báo.
+\end{itemize}
+
+Mục tiêu của phần mở rộng là chứng minh khả năng liên động liên thiết bị theo mô hình publish/subscribe trong cùng mạng LAN.
+
+\subsubsection*{Kiến trúc tổng thể và broker cục bộ}
+
+Mosquitto được chạy trên máy tính trong mạng nội bộ, mở cổng 1883. Cả hai ESP32 kết nối broker cùng địa chỉ IP LAN (ví dụ \texttt{192.168.1.5}).
+
+Luồng dữ liệu:
+\begin{enumerate}
+    \item Device A phát hiện chuyển động từ PIR.
+    \item Device A publish JSON lên topic sự kiện.
+    \item Device B subscribe topic này, nhận bản tin và kích hoạt buzzer.
+    \item Device B publish ACK trạng thái buzzer để Device A/log theo dõi.
+\end{enumerate}
+
+\subsubsection*{Thiết kế topic và payload MQTT}
+
+\begin{table}[h!]
+\centering
+\caption{Topic MQTT cho giao tiếp 2 thiết bị}
+\label{tab:mqtt-topics}
+\begin{tabular}{|c|c|c|}
+\hline
+\textbf{Topic} & \textbf{Publisher} & \textbf{Subscriber} \\
+\hline
+\texttt{iot/group1/pir/events} & Device A & Device B \\
+\hline
+\texttt{iot/group1/buzzer/state} & Device B & Device A (log ACK) \\
+\hline
+\end{tabular}
+\end{table}
+
+Payload sự kiện PIR ở Device A:
+\begin{lstlisting}[language=c, caption=JSON publish khi phát hiện chuyển động (trích pir\_mqtt.cpp)]
+doc["device_id"] = MQTT_CLIENT_ID_A;
+doc["event"]     = motionDetected ? "motion_detected" : "motion_cleared";
+doc["motion"]    = motionDetected;
+doc["ts_ms"]     = (unsigned long)millis();
+\end{lstlisting}
+
+\subsubsection*{Device A: Task PIR + MQTT publisher}
+
+Trên project chính, nhóm tạo \texttt{pirMqttTask} với các cơ chế:
+\begin{itemize}
+    \item Chờ STA sẵn sàng (\texttt{staConnected}) trước khi kết nối MQTT.
+    \item Tự reconnect MQTT mỗi 5 giây khi mất kết nối.
+    \item Đọc PIR theo chu kỳ 200ms, phát hiện cạnh lên (LOW $\rightarrow$ HIGH).
+    \item Dùng cooldown để chống spam bản tin liên tiếp.
+\end{itemize}
+
+\begin{lstlisting}[language=c, caption=Phát hiện cạnh lên PIR và kiểm soát cooldown (trích pir\_mqtt.cpp)]
+bool currentPir = digitalRead(PIR_PIN) == HIGH;
+if (currentPir && !lastPirState) {
+    uint32_t now = millis();
+    if (now - lastPublishTime >= PIR_COOLDOWN_MS) {
+        publishMotionEvent(true);
+        lastPublishTime = now;
+    }
+}
+lastPirState = currentPir;
+\end{lstlisting}
+
+\subsubsection*{Device B: MQTT subscriber + buzzer driver}
+
+Trên project \texttt{ESP32-S3-DevKit-C1\_Src}, nhóm chia thành ba task:
+\begin{itemize}
+    \item \texttt{mqttTask}: quản lý kết nối WiFi/MQTT và xử lý callback.
+    \item \texttt{buzzerTask}: bật/tắt buzzer theo cờ trigger, publish ACK.
+    \item \texttt{blinkLedTask}: nháy LED onboard để báo board đang hoạt động.
+\end{itemize}
+
+Chiến lược xử lý event chồng lấp: nếu buzzer đang kêu thì bỏ qua trigger mới để tránh cảnh báo kéo dài vô hạn.
+
+\begin{lstlisting}[language=c, caption=Logic bỏ qua sự kiện mới khi buzzer đang active (trích Device B main.cpp)]
+if (motion && strcmp(event, "motion_detected") == 0) {
+    if (xSemaphoreTake(alarmMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        if (alarmActive) {
+            Serial.println("[Buzzer] Alarm already active. Ignoring new event.");
+        } else {
+            alarmTrigger = true;
+        }
+        xSemaphoreGive(alarmMutex);
+    }
+}
+\end{lstlisting}
+
+\subsubsection*{Kết nối phần cứng của phần mở rộng}
+
+\textbf{PIR (Device A):}
+\begin{itemize}
+    \item Chân tín hiệu PIR nối vào GPIO cấu hình trong \texttt{PIR\_PIN} (mã hiện tại dùng GPIO8).
+    \item Cấu hình \texttt{INPUT\_PULLDOWN} để tránh trạng thái floating.
+\end{itemize}
+
+\textbf{Buzzer 5V (Device B):}
+\begin{itemize}
+    \item Không nối trực tiếp buzzer 5V vào GPIO ESP32.
+    \item Dùng transistor/MOSFET driver, nối mass chung giữa nguồn 5V và ESP32.
+    \item GPIO chỉ đóng vai trò tín hiệu điều khiển transistor.
+\end{itemize}
+
+\subsubsection*{Quy trình kiểm thử end-to-end}
+
+\begin{enumerate}
+    \item Chạy Mosquitto local broker và xác nhận cổng 1883 hoạt động.
+    \item Nạp firmware cho Device A và Device B.
+    \item Mở serial monitor cả hai board để quan sát trạng thái WiFi/MQTT.
+    \item Tạo chuyển động trước PIR.
+    \item Kiểm tra Device A publish event, Device B nhận event và phát còi.
+    \item Kiểm tra bản tin ACK của buzzer được publish ngược lại.
+\end{enumerate}
+
+\subsubsection*{Giá trị của phần mở rộng}
+
+Tính năng mở rộng này giúp hệ thống vượt khỏi mô hình đơn thiết bị, thể hiện năng lực:
+\begin{itemize}
+    \item giao tiếp liên node theo chuẩn MQTT,
+    \item triển khai kiến trúc event-driven trong LAN,
+    \item và thiết kế hệ cảnh báo tách rời cảm biến/chấp hành để dễ mở rộng thành mạng IoT nhiều node.
+\end{itemize}
