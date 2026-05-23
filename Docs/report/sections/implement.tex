@@ -156,7 +156,130 @@ Thiết kế này ngăn chặn tình trạng một consumer ``ăn cắp'' tín h
 Task 1 đã đáp ứng đầy đủ yêu cầu của đề bài: có ít nhất ba hành vi nhấp nháy tương ứng ba khoảng nhiệt độ, sử dụng semaphore để đồng bộ giữa task cảm biến và task LED, và không tạo thêm biến toàn cục mới. Kết quả là hệ thống có một kênh cảnh báo trực quan liên tục -- LED nhấp nháy với cường độ và tần suất tăng dần theo nhiệt độ -- hoạt động song song và không xung đột với các task còn lại của hệ thống.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\subsection{Task 3 - Theo dõi nhiệt độ và độ ẩm với màn hình LCD}
+\subsection{Task 2 -- Điều khiển LED NeoPixel dựa trên độ ẩm}
+
+Task 2 mở rộng khả năng hiển thị trực quan của hệ thống thông qua việc thay đổi phổ màu sắc trên đèn LED RGB NeoPixel tích hợp của mạch YoloUNO. Màu sắc của LED được quyết định dựa trên dữ liệu độ ẩm thu thập từ cảm biến DHT20. Ngoài ra, nhóm còn mở rộng thêm cơ chế ghi đè thủ công (Manual Override mode) để điều khiển đèn LED này thông qua dashboard trên server CoreIOT.
+
+\subsubsection*{Mục tiêu hiện thực}
+
+Nhóm hiện thực Task 2 thông qua task FreeRTOS \texttt{controlNeoLED} với các mục tiêu:
+\begin{itemize}
+    \item Hiện thực cơ chế lấy mẫu dữ liệu định kỳ (Polling Mechanism) để cập nhật giá trị độ ẩm \texttt{humidity} từ vùng nhớ chia sẻ \texttt{SharedData} một cách an toàn.
+    \item Ánh xạ giá trị độ ẩm sang 3 dải màu sắc trực quan (Vàng, Xanh lá, Đỏ).
+    \item Triển khai giải pháp bảo vệ tài nguyên phần cứng bằng khóa loại trừ tương hỗ (Mutex), ngăn ngừa hiện tượng tranh chấp tài nguyên khi chạy đa nhiệm.
+    \item Cung cấp thêm cơ chế Manual Override: cho phép vô hiệu hóa tạm thời logic ánh xạ màu sắc tự động theo giá trị độ ẩm và đổi màu LED NeoPixel sang màu Trắng khi nhận lệnh thông qua dashboard từ server CoreIOT.
+\end{itemize}
+
+\begin{lstlisting}[language=c, caption=Khởi tạo task \texttt{controlNeoLED} trong hàm \texttt{setup()} (trích main.cpp)]
+xTaskCreate(controlNeoLED, "Task Neo LED", 4096, projectSharedData, 1, NULL);
+\end{lstlisting}
+
+\subsubsection*{Định nghĩa ngưỡng độ ẩm và cấu hình màu sắc}
+
+Nhằm tăng tính khả độc (readability) và dễ dàng bảo trì, thay vì hard-code các giá trị RGB trực tiếp vào các hàm logic, nhóm đã định nghĩa trước các Macro màu sắc ở đầu file \texttt{neo\_led.cpp}. 
+
+\begin{lstlisting}[language=c, caption=Định nghĩa các Macro màu sắc cho NeoPixel]
+// Define Color Macros
+#define COLOR_YELLOW strip.Color(255, 255, 0)
+#define COLOR_GREEN  strip.Color(0, 255, 0)
+#define COLOR_RED    strip.Color(255, 0, 0)
+#define COLOR_WHITE  strip.Color(255, 255, 255)
+#define COLOR_OFF    strip.Color(0, 0, 0)
+\end{lstlisting}
+
+Cách tiếp cận này giúp mã nguồn gần gũi với ngôn ngữ tự nhiên, đồng thời dễ dàng điều chỉnh sắc độ (ví dụ: giảm độ chói) tại một nơi duy nhất mà không ảnh hưởng đến thuật toán phân loại.
+
+Cấu trúc logic phân loại độ ẩm tương đối ($H$) được hệ thống ánh xạ sang dải màu sắc theo nguyên tắc cụ thể trong Bảng \ref{tab:task2-logic}.
+
+\begin{table}[h!]
+\centering
+\caption{Quy tắc phân loại dải độ ẩm và màu sắc LED NeoPixel của Task 2}
+\label{tab:task2-logic}
+\begin{tabular}{|c|c|c|}
+\hline
+\textbf{Vùng} & \textbf{Điều kiện độ ẩm} & \textbf{Màu sắc hiển thị} \\
+\hline
+Dry (Khô) & $H < 40\%$ & \texttt{COLOR\_YELLOW} \\
+\hline
+Optimal (Tối ưu) & $40\% \leq H \leq 70\%$ & \texttt{COLOR\_GREEN} \\
+\hline
+Humid (Ẩm) & $H > 70\%$ & \texttt{COLOR\_RED} \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsubsection*{Cơ chế đồng bộ và Quản lý truy xuất dữ liệu định kỳ}
+
+Do thông số độ ẩm không khí biến thiên chậm theo thời gian, Task 2 ứng dụng giải pháp đồng bộ theo mô hình lấy mẫu định kỳ (Polling Mode). Khác với Task 1 sử dụng Semaphore để đáp ứng tức thời với sự kiện nhiệt độ, Task 2 tự động thức dậy sau mỗi 500ms, tiến hành kiểm tra vùng nhớ và cập nhật phần cứng, sau đó trả lại CPU cho hệ thống thông qua \texttt{vTaskDelay()}.
+
+Để bảo vệ tính toàn vẹn của hệ thống, Task 2 sử dụng cơ chế bảo vệ hai lớp với hai khóa Mutex độc lập:
+\begin{enumerate}
+    \item \textbf{Data Mutex (\texttt{sharedData->mutex}):} Dùng để ngăn chặn hiện tượng xung đột dữ liệu (Race Condition) khi đọc thông số \texttt{humidity} và \texttt{forceNeoPixelLED}. Khóa này chỉ được giữ trong thời gian cực ngắn (vài chu kỳ máy) để copy dữ liệu sang biến cục bộ, tránh block các task khác đang cần truy cập cảm biến.
+    \item \textbf{Hardware Mutex (\texttt{sharedData->neoPixelMutex}):} Giao thức 1-Wire của LED NeoPixel có yêu cầu timing cực kỳ khắt khe ở dải 800 KHz. Khóa Mutex này bọc quanh hàm \texttt{strip.show()} để đảm bảo tiến trình đẩy chuỗi bit phần cứng không bao giờ bị gián đoạn, loại bỏ hoàn toàn lỗi hiển thị sai màu (Color Glitch) trên mạch thực tế.
+\end{enumerate}
+
+\begin{lstlisting}[language=c, caption=Truy xuất an toàn dữ liệu và bảo vệ phần cứng bằng Mutex]
+// DATA MUTEX: Securely read the latest humidity value and override flag from shared memory
+if (xSemaphoreTake(sharedData->mutex, pdMS_TO_TICKS(50)) == pdTRUE) 
+{
+    localHum = sharedData->humidity;
+    isOverride = sharedData->forceNeoPixelLED;
+    xSemaphoreGive(sharedData->mutex); // Release lock immediately after copying
+}
+
+// HARDWARE MUTEX: Update LED color patterns safely
+if (xSemaphoreTake(sharedData->neoPixelMutex, pdMS_TO_TICKS(100)) == pdTRUE) 
+{
+    // ... Logic execution (Color mapping or Override handling) ...
+    strip.show(); // Push bits to physical hardware
+    xSemaphoreGive(sharedData->neoPixelMutex);
+}
+
+// Relinquish CPU for 0.5 second before the next sampling cycle
+vTaskDelay(pdMS_TO_TICKS(500));
+\end{lstlisting}
+
+\subsubsection*{Cơ chế Manual Override}
+
+Đây là cơ chế mở rộng thêm được nhóm thiết kế để điều khiển LED NeoPixel thông qua dashboard trên server CoreIOT. Khi hệ thống ở trạng thái tự động, Task 2 rẽ nhánh theo các ngưỡng độ ẩm (Vàng/Xanh/Đỏ). Tuy nhiên, khi cờ \texttt{isOverride} được bật (thông qua lệnh RPC từ CoreIOT ở Task 6), logic độ ẩm bị chặn hoàn toàn (Bypass). Mạch LED lập tức bị cưỡng chế hiển thị sang mức sáng màu Trắng (\texttt{COLOR\_WHITE}).
+
+\begin{lstlisting}[language=c, caption=Cấu trúc rẽ nhánh ưu tiên tích hợp tính năng Override]
+// Check if an override command was received from the Internet (via Task 6)
+if (isOverride)
+{
+    // MANUAL OVERRIDE MODE: Force LED to solid White, bypass humidity logic
+    strip.setPixelColor(0, COLOR_WHITE);
+} 
+else
+{
+    // AUTOMATIC MODE: Execute mapping algorithm based on sensor readings
+    if (localHum < 40.0) 
+    {
+        strip.setPixelColor(0, COLOR_YELLOW);
+    } 
+    else if (localHum >= 40.0 && localHum <= 70.0) 
+    {
+        strip.setPixelColor(0, COLOR_GREEN);
+    } 
+    else 
+    {
+        strip.setPixelColor(0, COLOR_RED);
+    }
+}
+\end{lstlisting}
+
+\subsubsection*{Điểm nhấn kỹ thuật của Task 2}
+
+\begin{itemize}
+    \item \textbf{Kiến trúc Dual-Mutex:} Tách bạch rõ ràng giữa khóa bảo vệ dữ liệu (Data Mutex) và khóa bảo vệ ngoại vi (Hardware Mutex), giúp tối ưu hóa thời gian chờ của các task trong hệ thống.
+    \item \textbf{Nguyên lý Open/Closed (OCP):} Thuật toán cốt lõi của Task 2 "Đóng" với các sửa đổi trực tiếp, nhưng "Mở" để có thể mở rộng thông qua các biến trạng thái ngoại vi (Cờ Override).
+\end{itemize}
+
+\subsubsection*{Tổng kết Task 2}
+
+Task 2 đã đáp ứng đầy đủ yêu cầu của đề bài: có ít nhất ba màu sắc hiển thị tương ứng với ba khoảng độ ẩm, sử dụng mutex để đồng bộ an toàn dữ liệu cũng như bảo vệ kênh giao tiếp phần cứng LED NeoPixel, và không tạo thêm biến toàn cục mới (cờ hiệu Override được quản lý tập trung trong \texttt{SharedData}). Kết quả là hệ thống có một kênh trực quan hóa trạng thái môi trường -- LED chuyển màu Vàng, Xanh, Đỏ theo dải đo hoặc sáng Trắng tĩnh khi bị ghi đè -- hoạt động song song, mượt mà và hoàn toàn không xung đột tài nguyên với các task còn lại của hệ thống.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Task 3 -- Theo dõi nhiệt độ và độ ẩm với màn hình LCD}
 
 Task 3 tập trung vào ba yêu cầu cốt lõi của đề bài: (1) đo nhiệt độ/độ ẩm theo chu kỳ, (2) hiển thị ít nhất 3 trạng thái trên LCD dựa theo ngưỡng đo, và (3) loại bỏ các biến toàn cục rời rạc bằng mô hình dữ liệu dùng chung có đồng bộ trong FreeRTOS.
 
@@ -293,7 +416,7 @@ Riêng trạng thái \texttt{CRITICAL}, nhóm bổ sung hiệu ứng nhấp nhá
 Task 3 đã đáp ứng các yêu cầu bắt buộc của đề bài: có cơ chế phát semaphore theo điều kiện đo, có ít nhất 3 trạng thái hiển thị trên LCD, và dùng mô hình dữ liệu chia sẻ có bảo vệ mutex thay cho cách dùng biến toàn cục rời rạc. Kết quả là hệ thống chạy ổn định trong môi trường đa task và tạo nền tảng cho các task mở rộng ở các chương tiếp theo.
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\subsection{Task 4 - Webserver ở chế độ Access Point}
+\subsection{Task 4 -- Webserver ở chế độ Access Point}
 
 \subsubsection*{Mục tiêu và phạm vi}
 
@@ -725,6 +848,144 @@ Nhãn dự đoán (\texttt{mlLabel}) được ghi vào \texttt{SharedData} qua \
 Task 5 đã hoàn thành một pipeline TinyML khép kín và đúng yêu cầu đề bài: có mô tả tập dữ liệu và quy trình gán nhãn; mô hình được triển khai trực tiếp trên vi điều khiển; có đánh giá độ chính xác trên cả PC (float32 và int8) lẫn kịch bản thực; có thảo luận về nguyên nhân kết quả và các giới hạn khi áp dụng thực tế. Cơ chế đồng bộ \texttt{semDataReady} đảm bảo task TinyML hoạt động hiệu quả trong môi trường đa task của FreeRTOS, không gây tải dư thừa lên CPU.
 
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Task 6 -- Kết nối và giám sát hệ thống qua nền tảng máy chủ đám mây CoreIOT}
+
+Task 6 đóng vai trò là cầu nối cốt lõi đưa hệ thống nhúng cục bộ kết nối với không gian Internet of Things (IoT). Để đảm bảo tính ổn định và khả năng chịu lỗi, nhóm thiết kế phân rã tác vụ này thành hai luồng thực thi độc lập trong FreeRTOS: luồng quản lý kết nối hạ tầng mạng (\texttt{WiFi\_connect}) và luồng giao tiếp dữ liệu lớp ứng dụng với server CoreIOT qua giao thức MQTT (\texttt{CoreIoT\_Task}).
+
+\subsubsection*{Mục tiêu hiện thực}
+
+Nhóm hiện thực Task 6 thông qua 2 task FreeRTOS \texttt{WiFi\_connect} và \texttt{CoreIoT\_Task} với các mục tiêu:
+\begin{itemize}
+    \item \textbf{Phân hệ Wi-Fi:} Tự động giám sát và phục hồi kết nối Internet (Auto-reconnect) dựa trên thông tin cấu hình (SSID/Password) được cung cấp từ Web Server (Task 4) mà không chặn (non-blocking) các tiến trình khác.
+    \item \textbf{Phân hệ CoreIOT (Telemetry):} Định kỳ đóng gói dữ liệu môi trường (Nhiệt độ, Độ ẩm) dưới chuẩn định dạng JSON và xuất bản (Publish) lên đám mây thông qua MQTT Broker.
+    \item \textbf{Cơ chế điều khiển Ghi đè (Manual Override):} Đăng ký (Subscribe) luồng RPC (Remote Procedure Call) để tiếp nhận lệnh điều khiển thiết bị từ xa, thiết lập vai trò "Trung tâm điều phối" nhằm thay đổi hành vi của Task 1 và Task 2.
+    \item \textbf{Đồng bộ tài nguyên:} Sử dụng Mutex để bảo vệ giao tiếp UART (\texttt{Serial}), tránh hiện tượng đứt gãy log trên Terminal khi nhiều task cùng in dữ liệu đồng thời.
+\end{itemize}
+
+Hai tiến trình của Task 6 được đăng ký vào bộ lập lịch FreeRTOS ngay tại hàm \texttt{setup()} với sự phân bổ mức ưu tiên (Priority) có chủ ý:
+
+\begin{lstlisting}[language=c, caption=Khởi tạo các task liên quan Task 6 trong hàm \texttt{setup()} (trích main.cpp)]
+// Initialize WiFi management task with Priority = 1 (Standard)
+xTaskCreate(WiFi_connect, "WiFi Connect", 4096, projectSharedData, 1, NULL);
+
+// Initialize MQTT CoreIOT task with Priority = 2 (Higher)
+xTaskCreate(CoreIoT_Task, "CoreIOT Task", 8192, projectSharedData, 2, NULL);
+\end{lstlisting}
+
+Việc cấp phát cho \texttt{CoreIoT\_Task} không gian Stack lớn (8192 bytes) và mức ưu tiên cao hơn (Priority = 2) đảm bảo rằng các gói tin MQTT Keep-Alive và các lệnh RPC từ Server sẽ được vi điều khiển ưu tiên xử lý ngay lập tức, ngăn ngừa nguy cơ rớt kết nối (Timeout) do trễ phản hồi từ Client.
+
+\subsubsection*{Phần 1: Luồng quản lý kết nối hạ tầng Wi-Fi (Task WiFi)}
+
+Nhiệm vụ của file \texttt{task\_wifi.cpp} là duy trì kết nối mạng STA (Station) một cách thầm lặng. Task này hoạt động dựa trên thông tin thông tin cấu hình mạng (\texttt{staSSID}) được lưu trữ trong \texttt{SharedData}. Điểm đặc biệt của kiến trúc này là cơ chế "Chờ đợi thông minh": Nếu người dùng chưa truy cập trang \texttt{/settings} của Web Server (Task 4) để nhập Wi-Fi, task sẽ tự động trả về \texttt{false} và "đi ngủ", hoàn toàn không tiêu tốn tài nguyên rà quét mạng vô ích.
+
+\begin{lstlisting}[language=c, caption=Cơ chế kiểm tra và tự phục hồi kết nối Wi-Fi (trích task\_wifi.cpp)]
+bool WiFi_reconnect(SharedData* sharedData) {
+    // Check if the SSID has been configured via the Web Server
+    if (strlen(sharedData->staSSID) == 0) {
+        return false;
+    }
+
+    // Return true immediately if already connected
+    if (WiFi.status() == WL_CONNECTED) {
+        return true;
+    }
+
+    // SERIAL MUTEX PROTECTION: Log the reconnection safely
+    if (xSemaphoreTake(sharedData->serialMutex, portMAX_DELAY) == pdTRUE) {
+        Serial.printf("\n[WiFi Task] Reconnecting to STA: %s\n", sharedData->staSSID);
+        Serial.flush();
+        xSemaphoreGive(sharedData->serialMutex);
+    }
+
+    // Trigger ESP32 internal non-blocking reconnect mechanism
+    WiFi.reconnect();
+    return false;
+}
+\end{lstlisting}
+
+Trạng thái kết nối sau đó được cập nhật vào biến toàn cục \texttt{sharedData->staConnected}. Vòng lặp của task này lặp lại sau mỗi 5 giây (\texttt{vTaskDelay(pdMS\_TO\_TICKS(5000))}), đóng vai trò như một tín hiệu cờ (Flag) cho Task CoreIOT biết khi nào mạng đã sẵn sàng để truyền tải dữ liệu.
+
+\subsubsection*{Phần 2: Giao tiếp đám mây với giao thức MQTT (Task CoreIOT)}
+
+Khi cờ \texttt{staConnected} báo \texttt{true}, task \texttt{CoreIoT\_Task} sẽ bắt đầu khởi động luồng kết nối TCP/IP tới máy chủ \texttt{app.coreiot.io} thông qua thư viện \texttt{PubSubClient}.
+
+\paragraph{Luồng xuất bản dữ liệu (Telemetry Publish)}
+Dữ liệu cảm biến được hệ thống đọc an toàn từ \texttt{SharedData} thông qua Data Mutex, sau đó sử dụng thư viện \texttt{ArduinoJson} (hoặc hàm \texttt{snprintf}) để đóng gói thành chuỗi JSON chuẩn hóa. Quá trình này diễn ra định kỳ 5 giây một lần (được điều hướng bằng biến \texttt{lastSendTime} thay vì \texttt{delay()} chặn hệ thống).
+
+\begin{lstlisting}[language=c, caption=Đóng gói và Publish dữ liệu Telemetry (trích task\_coreiot.cpp)]
+// Check the timer: Only send Telemetry after 5000ms have elapsed
+if (millis() - lastSendTime > 5000) {
+    lastSendTime = millis();
+
+    // DATA MUTEX: Securely retrieve sensor readings from shared memory
+    if (xSemaphoreTake(sharedData->mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        currentTemp = sharedData->temperature;
+        currentHum  = sharedData->humidity;
+        xSemaphoreGive(sharedData->mutex);
+    }
+
+    // Serialize payload to JSON format
+    char payload[128];
+    snprintf(payload, sizeof(payload), 
+             "{\"temperature\":%.2f, \"humidity\":%.2f}", currentTemp, currentHum);
+
+    // Publish to CoreIOT standard telemetry topic
+    mqttClient.publish("v1/devices/me/telemetry", payload);
+}
+\end{lstlisting}
+Để đảm bảo tương thích 100\% với hệ sinh thái ThingsBoard của CoreIOT, nhóm đã cấu hình topic đích trên Server thành \texttt{v1/devices/me/telemetry}. Nhờ đó, dữ liệu ngay lập tức được phản ánh lên các widget biểu đồ (Line Chart) và hiển thị số (Digital Gauge) trên Dashboard của người vận hành.
+
+\paragraph{Cơ chế Ghi đè hệ thống (Manual Override) qua lệnh RPC}
+Tính năng cao cấp nhất của Task 6 là khả năng can thiệp trực tiếp vào hành vi phần cứng của hệ thống từ bất cứ đâu thông qua Internet (Manual Override).
+
+Thay vì để Task CoreIOT gọi trực tiếp các lệnh phần cứng (gây vi phạm nguyên tắc đóng gói module và đụng độ tài nguyên), nhóm thiết kế một cơ chế "Giao tiếp mềm". Khi người dùng tương tác với 2 nút Switch trên Dashboard CoreIOT, Server sẽ phát một gói tin RPC xuống topic \texttt{v1/devices/me/rpc/request/+}. Task 6 sẽ bắt gói tin này tại hàm \texttt{callback()}, giải mã JSON để tìm tên lệnh (\texttt{method}):
+
+\begin{lstlisting}[language=c, caption=Callback xử lý lệnh RPC Override từ Server (trích task\_coreiot.cpp)]
+const char* method = doc["method"];
+bool params = doc["params"]; // true (ON) or false (OFF)
+
+// Route the command to the respective hardware override flag
+if (String(method) == "setBuiltInLED") 
+{
+    // DATA MUTEX: Safely update the Override flag for Task 1
+    if (xSemaphoreTake(projectSharedData->mutex, portMAX_DELAY) == pdTRUE) {
+        projectSharedData->forceBuiltInLED = params;
+        xSemaphoreGive(projectSharedData->mutex);
+    }
+} 
+else if (String(method) == "setNeoPixelLED") 
+{
+    // DATA MUTEX: Safely update the Override flag for Task 2
+    if (xSemaphoreTake(projectSharedData->mutex, portMAX_DELAY) == pdTRUE) {
+        projectSharedData->forceNeoPixelLED = params;
+        xSemaphoreGive(projectSharedData->mutex);
+    }
+}
+
+// Acknowledge the RPC to prevent timeout on the Dashboard
+String responseTopic = "v1/devices/me/rpc/response/" + reqId;
+mqttClient.publish(responseTopic.c_str(), "{}");
+\end{lstlisting}
+
+Sau khi hai cờ \texttt{forceBuiltInLED} và \texttt{forceNeoPixelLED} được Task 6 cập nhật vào bộ nhớ chung:
+\begin{itemize}
+    \item \textbf{Tại Task 1 (led\_blinky):} Khi cờ \texttt{forceBuiltInLED} được bật, tiến trình ngay lập tức thoát khỏi chu kỳ nháy theo nhiệt độ, xuất mức PWM tối đa để LED luôn sáng tĩnh.
+    \item \textbf{Tại Task 2 (controlNeoLED):} Khi cờ \texttt{forceNeoPixelLED} được bật, thuật toán phân loại độ ẩm bị Bypass, ép bóng LED RGB hiển thị màu Trắng cố định (\texttt{COLOR\_WHITE}).
+\end{itemize}
+Cơ chế thiết kế lệnh RPC trả lời (Acknowledge) ở cuối hàm callback giúp Server CoreIOT biết thiết bị đã nhận lệnh thành công, từ đó cập nhật trạng thái của nút Switch trên giao diện đồ họa.
+
+\subsubsection*{Điểm nhấn kỹ thuật của Task 6}
+
+\begin{itemize}
+    \item \textbf{Tách biệt mối quan tâm (Separation of Concerns):} Việc tách Task WiFi và Task MQTT giúp đoạn mã quản lý logic lớp mạng không bị hòa lẫn vào lớp ứng dụng. Nếu mạng Wi-Fi có độ trễ lớn, hàm \texttt{WiFi.reconnect()} sẽ không làm chặn vòng lặp nhận gói tin MQTT.
+    \item \textbf{Quản lý UART an toàn với Mutex:} Hệ thống có rất nhiều task gọi \texttt{Serial.print()} đồng thời để debug. Task 6 đã sử dụng triệt để \texttt{sharedData->serialMutex} để bao bọc các lệnh in log, đảm bảo dữ liệu hiển thị trên Monitor luôn nguyên vẹn, không bị chồng chéo các ký tự (Data interleaving).
+    \item \textbf{Kiến trúc Manual Override phi tập trung:} Bằng cách biến Task 6 thành "Bộ điều phối cờ hiệu" và để Task 1, Task 2 tự rẽ nhánh dựa trên cờ hiệu, hệ thống đạt được sự vận hành hoàn hảo không xảy ra xung đột điều khiển phần cứng (Hardware Race Conditions).
+\end{itemize}
+
+\subsubsection*{Tổng kết Task 6}
+
+Task 6 đã hoàn thành xuất sắc mục tiêu đưa thiết bị YoloUNO lên nền tảng IoT đám mây. Hệ thống không chỉ có khả năng tự động khôi phục kết nối hạ tầng mạng ổn định thông qua một tiến trình Wi-Fi độc lập, mà còn duy trì luồng giám sát môi trường liên tục bằng giao thức MQTT. Đặc biệt, việc triển khai thành công cơ chế Ghi đè thủ công (Manual Override) thông qua RPC đã chứng minh khả năng thiết kế kiến trúc phần mềm tích hợp cao của nhóm, biến một mạng lưới các tác vụ (Tasks) rời rạc thành một hệ sinh thái IoT tương tác hai chiều, thời gian thực và an toàn tuyệt đối về mặt dữ liệu.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \subsection{Task mở rộng - Giao tiếp 2 thiết bị qua Local MQTT Broker}
 
