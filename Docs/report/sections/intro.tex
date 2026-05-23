@@ -1,1 +1,49 @@
+﻿\newpage
 \section{Giới thiệu}
+
+\subsection{Đặt vấn đề}
+
+Trong những năm gần đây, Internet of Things (IoT) trở thành một xu hướng trọng tâm trong chuyển đổi số nhờ khả năng kết nối cảm biến, thiết bị điều khiển và dịch vụ đám mây thành một hệ sinh thái thống nhất. Đối với các hệ thống nhúng thời gian thực, bài toán không chỉ dừng ở việc ``đọc được dữ liệu'' mà còn phải đảm bảo phản hồi nhanh, hoạt động ổn định khi đa nhiệm, và dễ mở rộng khi tích hợp thêm các chức năng thông minh.
+
+Xuất phát từ yêu cầu đó, đề tài \textit{YoloUNO ESP32-S3 IoT Project} được xây dựng để mô phỏng một hệ thống giám sát và điều khiển môi trường theo hướng thực tiễn: đo nhiệt độ/độ ẩm, hiển thị trạng thái cảnh báo tại chỗ, điều khiển thiết bị qua web, và giao tiếp giữa nhiều node thông qua MQTT. Đây là mô hình điển hình của các ứng dụng nhà thông minh, cảnh báo an toàn nội bộ, và giám sát phòng kỹ thuật quy mô nhỏ.
+
+\subsection{Mục tiêu đề tài}
+
+Mục tiêu tổng quát của đề tài là làm chủ quy trình phát triển một hệ thống IoT hoàn chỉnh trên nền ESP32-S3 với kiến trúc FreeRTOS, đồng thời đáp ứng các task bắt buộc của học phần. Cụ thể:
+
+\begin{itemize}
+    \item Thiết kế lại logic xử lý theo hướng đa nhiệm và đồng bộ bằng semaphore/mutex.
+    \item Xây dựng cơ chế theo dõi nhiệt độ/độ ẩm theo trạng thái và hiển thị trực quan trên LCD.
+    \item Phát triển web server chế độ AP (mở rộng AP+STA) với dashboard điều khiển thiết bị.
+    \item Chuẩn bị nền tảng để tích hợp TinyML và đánh giá độ chính xác trên phần cứng.
+    \item Kết nối hệ thống với nền tảng cloud (CoreIOT) theo mô hình publish/subscribe.
+    \item Mở rộng thêm tính năng giao tiếp hai thiết bị qua local MQTT broker (Mosquitto): PIR node phát hiện chuyển động và buzzer node phát cảnh báo.
+\end{itemize}
+
+Về mức độ cải tiến, mã nguồn đã được chỉnh sửa theo hướng module hóa, bổ sung task mới và thay đổi luồng xử lý đáng kể so với baseline ban đầu, đảm bảo đáp ứng yêu cầu khác biệt tối thiểu 30\% của đề bài.
+
+\subsection{Phạm vi thực hiện}
+
+Đề tài được triển khai trong phạm vi phần cứng và phần mềm như sau:
+
+\begin{itemize}
+    \item \textbf{Phần cứng chính}: board YoloUNO (ESP32-S3), cảm biến DHT20, LCD I2C, NeoPixel RGB, module quạt mini PWM.
+    \item \textbf{Phần cứng mở rộng}: một board ESP32-S3 DevKitC-1 và buzzer 5V (điều khiển qua transistor/MOSFET driver), cảm biến PIR gắn trên node phát hiện chuyển động.
+    \item \textbf{Phần mềm}: PlatformIO, Arduino framework, FreeRTOS, ESPAsyncWebServer, ArduinoJson, PubSubClient.
+    \item \textbf{Mạng}: WiFi nội bộ, web server AP/AP+STA, MQTT broker cục bộ Mosquitto.
+\end{itemize}
+
+Trong khuôn khổ báo cáo này, nhóm tập trung mô tả chi tiết các phần đã hiện thực và kiểm thử trực tiếp trên phần cứng thật. Những nội dung còn lại (đặc biệt TinyML nâng cao và tối ưu cloud workflow) được thiết kế theo hướng có thể tích hợp tiếp mà không phá vỡ kiến trúc hiện có.
+
+\subsection{Cấu trúc báo cáo}
+
+Báo cáo được tổ chức theo trình tự từ lý thuyết đến triển khai và đánh giá:
+
+\begin{itemize}
+    \item \textbf{Chương 1 -- Giới thiệu}: nêu bối cảnh, mục tiêu, phạm vi và định hướng thực hiện đề tài.
+    \item \textbf{Chương 2 -- Cơ sở lý thuyết}: trình bày nền tảng RTOS, ESP32-S3, web, TinyML và MQTT/CoreIOT.
+    \item \textbf{Chương 3 -- Tổng quan hệ thống}: mô tả kiến trúc phần mềm, phần cứng và cấu trúc dự án.
+    \item \textbf{Chương 4 -- Hiện thực}: trình bày chi tiết cách nhóm triển khai các task và tính năng mở rộng.
+    \item \textbf{Chương 5 -- Kết quả thực nghiệm}: tổng hợp kiểm thử, đối chiếu kết quả mong đợi và kết quả thực tế.
+    \item \textbf{Chương 6 -- Thảo luận và kết luận}: đánh giá ưu/nhược điểm, bài học rút ra và hướng phát triển tiếp theo.
+\end{itemize}
