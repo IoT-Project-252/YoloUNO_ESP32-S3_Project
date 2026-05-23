@@ -10,7 +10,7 @@
 // Override these via build_flags in platformio.ini, e.g.:
 //   -DMQTT_HOST="\"192.168.1.10\""
 #ifndef MQTT_HOST
-#define MQTT_HOST       "192.168.1.5"   // Mosquitto broker IP in LAN
+#define MQTT_HOST       "192.168.1.9"   // Mosquitto broker IP in LAN
 #endif
 
 #ifndef MQTT_PORT

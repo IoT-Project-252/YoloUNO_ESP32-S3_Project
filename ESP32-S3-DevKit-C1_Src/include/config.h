@@ -12,7 +12,7 @@
 #define WIFI_PASS       "15051971"
 
 // ── MQTT Broker Configuration ───────────────────────────────────────────────
-#define MQTT_HOST       "192.168.1.5"   // Mosquitto broker IP in LAN
+#define MQTT_HOST       "192.168.1.9"   // Mosquitto broker IP in LAN
 #define MQTT_PORT       1883
 #define MQTT_USER       ""               // Leave empty if no auth
 #define MQTT_PASS       ""               // Leave empty if no auth

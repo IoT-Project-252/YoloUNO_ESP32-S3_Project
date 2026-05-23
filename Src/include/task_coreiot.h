@@ -8,7 +8,8 @@
 
 // --- CoreIOT Server Configuration ---
 #define CORE_IOT_SERVER "app.coreiot.io"            // CoreIOT Server
-#define CORE_IOT_TOKEN  "unmkldv00sjjmj2ob29d"      // Device Access Token
+// #define CORE_IOT_TOKEN  "unmkldv00sjjmj2ob29d"      // Device Access Token
+#define CORE_IOT_TOKEN  "e6odipbkx0qh0pxaw1hb"      // Device Access Token
 #define CORE_IOT_PORT   1883
 
 // Task prototype

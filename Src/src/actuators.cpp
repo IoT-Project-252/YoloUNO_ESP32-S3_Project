@@ -28,10 +28,10 @@ void actuatorTask(void *pvParameters)
     while (1)
     {
         // --- Read actuator state under mutex ---
-        bool    curLedOn;
-        uint8_t curR, curG, curB;
-        bool    curFanOn;
-        uint8_t curFanSpeed;
+        bool    curLedOn = prevLedOn;
+        uint8_t curR = prevR, curG = prevG, curB = prevB;
+        bool    curFanOn = prevFanOn;
+        uint8_t curFanSpeed = prevFanSpeed;
         bool    needLed = false, needFan = false;
 
         if (xSemaphoreTake(sd->actuatorMutex, pdMS_TO_TICKS(50)) == pdTRUE)
@@ -48,15 +48,26 @@ void actuatorTask(void *pvParameters)
 
             xSemaphoreGive(sd->actuatorMutex);
         }
+        else
+        {
+            // If state cannot be read safely, skip this cycle to avoid using stale/undefined values.
+            vTaskDelay(pdMS_TO_TICKS(10));
+            continue;
+        }
 
         // --- Drive NeoPixel ---
         if (needLed ||
             curLedOn != prevLedOn || curR != prevR || curG != prevG || curB != prevB)
         {
             if (curLedOn) {
-                strip.setPixelColor(0, strip.Color(curR, curG, curB));
+                // Apply the selected color to the whole external strip/module.
+                for (uint16_t i = 0; i < NEOPIXEL_COUNT; i++) {
+                    strip.setPixelColor(i, strip.Color(curR, curG, curB));
+                }
             } else {
-                strip.setPixelColor(0, 0);
+                for (uint16_t i = 0; i < NEOPIXEL_COUNT; i++) {
+                    strip.setPixelColor(i, 0);
+                }
             }
             strip.show();
             prevLedOn = curLedOn;

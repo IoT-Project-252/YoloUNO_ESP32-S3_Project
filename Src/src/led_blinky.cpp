@@ -1,6 +1,6 @@
 #include "led_blinky.h"
 
-static const uint8_t LED_PWM_CH = 0;          // CH = Channel
+static const uint8_t LED_PWM_CH = 1;          // CH = Channel (must not conflict with fan channel)
 static const uint32_t LED_PWM_FREQ = 5000;    // PWM frequence = 5000Hz
 static const uint8_t LED_PWM_RES = 8;         // Resolution = 0..255 (8-bit)
 
