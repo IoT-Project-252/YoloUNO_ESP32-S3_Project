@@ -76,7 +76,8 @@ bool initTinyML() {
 
     static tflite::AllOpsResolver resolver;
     static tflite::MicroInterpreter static_interpreter(
-        model, resolver, tensor_arena, kTensorArenaSize);
+        model, resolver, tensor_arena, kTensorArenaSize,
+        error_reporter, nullptr, nullptr);
     interpreter = &static_interpreter;
 
     if (interpreter->AllocateTensors() != kTfLiteOk) {
