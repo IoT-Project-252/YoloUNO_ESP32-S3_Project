@@ -53,6 +53,10 @@ struct SharedData
 
     // Handoff signal, sensor -> ML
     SemaphoreHandle_t semDataReady;
+
+    // --- Flags for Override mode (Task 6) ---
+    bool forceBuiltInLED;
+    bool forceNeoPixelLED;
 };
 
 // Global instance

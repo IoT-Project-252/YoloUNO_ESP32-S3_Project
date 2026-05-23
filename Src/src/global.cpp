@@ -44,4 +44,8 @@ void initGlobalData()
     projectSharedData->semTempCritical = xSemaphoreCreateBinary();
 
     projectSharedData->semDataReady = xSemaphoreCreateBinary();
+
+    // Initialize flags for Override Mode
+    projectSharedData->forceBuiltInLED = false;
+    projectSharedData->forceNeoPixelLED = false;
 }

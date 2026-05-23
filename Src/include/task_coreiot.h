@@ -7,8 +7,8 @@
 #include <ArduinoJson.h>
 
 // --- CoreIOT Server Configuration ---
-#define CORE_IOT_SERVER "app.coreiot.io"
-#define CORE_IOT_TOKEN  "unmkldv00sjjmj2ob29d"
+#define CORE_IOT_SERVER "app.coreiot.io"            // CoreIOT Server
+#define CORE_IOT_TOKEN  "unmkldv00sjjmj2ob29d"      // Device Access Token
 #define CORE_IOT_PORT   1883
 
 // Task prototype
