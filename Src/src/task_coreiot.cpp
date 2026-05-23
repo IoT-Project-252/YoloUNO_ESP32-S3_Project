@@ -23,34 +23,34 @@ static void callback(char* topic, byte* payload, unsigned int length)
     }
 
     const char* method = doc["method"];
-    bool params = doc["params"]; // true for ON, false for OFF
+    bool params = doc["params"]; // true for ON (Override), false for OFF (Auto)
     bool validMethod = false;
 
-    // Route the command based on the method name
-    if (String(method) == "setLedState") 
+    // Route the command based on the Override flags
+    if (String(method) == "setBuiltInLED") 
     {
         validMethod = true;
-        if (xSemaphoreTake(projectSharedData->actuatorMutex, portMAX_DELAY) == pdTRUE) {
-            projectSharedData->ledOn = params;
-            projectSharedData->ledChanged = true;
-            xSemaphoreGive(projectSharedData->actuatorMutex);
+        // DATA MUTEX: Safely update the Override flag for Task 1 LED
+        if (xSemaphoreTake(projectSharedData->mutex, portMAX_DELAY) == pdTRUE) {
+            projectSharedData->forceBuiltInLED = params;
+            xSemaphoreGive(projectSharedData->mutex);
         }
         if (xSemaphoreTake(projectSharedData->serialMutex, portMAX_DELAY) == pdTRUE) {
-            Serial.printf("[CoreIOT] RPC LED: %d\n", params);
+            Serial.printf("[CoreIOT] RPC LED Override: %d\n", params);
             Serial.flush();
             xSemaphoreGive(projectSharedData->serialMutex);
         }
     } 
-    else if (String(method) == "setFanState") 
+    else if (String(method) == "setNeoPixelLED") 
     {
         validMethod = true;
-        if (xSemaphoreTake(projectSharedData->actuatorMutex, portMAX_DELAY) == pdTRUE) {
-            projectSharedData->fanOn = params;
-            projectSharedData->fanChanged = true;
-            xSemaphoreGive(projectSharedData->actuatorMutex);
+        // DATA MUTEX: Safely update the Override flag for Task 2 NeoPixel LED
+        if (xSemaphoreTake(projectSharedData->mutex, portMAX_DELAY) == pdTRUE) {
+            projectSharedData->forceNeoPixelLED = params;
+            xSemaphoreGive(projectSharedData->mutex);
         }
         if (xSemaphoreTake(projectSharedData->serialMutex, portMAX_DELAY) == pdTRUE) {
-            Serial.printf("[CoreIOT] RPC Fan: %d\n", params);
+            Serial.printf("[CoreIOT] RPC NeoPixel LED Override: %d\n", params);
             Serial.flush();
             xSemaphoreGive(projectSharedData->serialMutex);
         }
@@ -155,6 +155,6 @@ void CoreIoT_Task(void *pvParameters)
         }
         
         // Wait before the next telemetry transmission cycle
-        vTaskDelay(pdMS_TO_TICKS(1000)); 
+        vTaskDelay(pdMS_TO_TICKS(500)); 
     }
 }
