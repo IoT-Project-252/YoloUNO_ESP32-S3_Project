@@ -1,2 +1,30 @@
-\newpage
+﻿\newpage
 \section{Kết luận}
+
+\subsection{Thảo luận}
+
+Báo cáo đã hiện thực một hệ thống IoT thời gian thực trên nền tảng YoloUNO ESP32-S3 theo hướng mô-đun, có khả năng mở rộng và vận hành ổn định trong môi trường đa nhiệm. Các tác vụ phần cứng và mạng được tách thành các task FreeRTOS độc lập, đồng bộ qua semaphore/mutex nhằm giảm xung đột tài nguyên khi nhiều tiến trình truy cập đồng thời vào cảm biến, bus I2C và cơ cấu chấp hành.
+
+Về mặt chức năng, hệ thống đã bao phủ đầy đủ chuỗi xử lý từ thu thập dữ liệu môi trường (DHT20), cảnh báo tại chỗ (LED, LCD), điều khiển cục bộ qua web server AP/AP+STA, đến giám sát và điều khiển từ xa qua CoreIOT (MQTT + RPC). Ngoài ra, phần mở rộng giao tiếp hai thiết bị qua local broker Mosquitto đã chứng minh năng lực triển khai kiến trúc phân tán theo mô hình publish/subscribe trong mạng LAN.
+
+Trong quá trình phát triển, nhóm gặp một số khó khăn điển hình: xử lý đồng thời giữa các task phần cứng và task mạng, đảm bảo tính nhất quán trạng thái giữa dashboard và firmware, cũng như cấu hình ổn định kết nối Wi-Fi/MQTT khi chạy thực nghiệm liên tục. Các vấn đề này được giải quyết bằng cách chuẩn hóa cấu trúc dữ liệu dùng chung (\texttt{SharedData}), thêm cơ chế khóa tài nguyên chặt chẽ và thiết kế vòng lặp reconnect không chặn.
+
+\subsection{Hạn chế và hướng phát triển}
+
+Mặc dù đã đạt các mục tiêu chính, hệ thống vẫn còn một số điểm có thể cải tiến:
+\begin{itemize}
+    \item Chưa tích hợp cơ chế cập nhật firmware từ xa (OTA), nên việc cập nhật vẫn phụ thuộc thao tác nạp thủ công.
+    \item Phần đánh giá hiệu năng mới dừng ở kiểm thử chức năng; chưa có bộ đo định lượng sâu cho độ trễ API, mức dùng RAM/CPU theo thời gian dài.
+    \item Thành phần TinyML hiện dùng tập dữ liệu tổng hợp; cần bổ sung dữ liệu thực tế nhiều điều kiện môi trường để tăng tính khái quát.
+    \item Bảo mật MQTT/Web mới ở mức cơ bản; cần mở rộng sang TLS, quản lý chứng chỉ và kiểm soát truy cập theo vai trò.
+\end{itemize}
+
+Từ đó, các hướng phát triển tiếp theo gồm: tích hợp OTA, chuẩn hóa pipeline thu thập dữ liệu thực cho TinyML, bổ sung dashboard thống kê hiệu năng theo thời gian thực, và mở rộng kịch bản liên node (nhiều cảm biến - nhiều cơ cấu chấp hành) trên cùng hạ tầng MQTT.
+
+\subsection{Kết luận chung}
+
+Nhìn chung, đề tài đã hoàn thành mục tiêu xây dựng một hệ thống IoT đa nhiệm có khả năng giám sát, điều khiển và kết nối đám mây trên ESP32-S3, đồng thời chứng minh được tính mở rộng thông qua bài toán giao tiếp hai thiết bị độc lập. Kết quả đạt được tạo nền tảng tốt để nhóm tiếp tục phát triển lên các phiên bản có độ tin cậy, bảo mật và mức tự động hóa cao hơn trong các học phần hoặc dự án thực tế tiếp theo.
+
+Link video demo: \url{https://drive.google.com/drive/folders/1wmgsC1kSAphUyIjJW4B4_yDwSpX562zM?usp=sharing}
+
+Source code: \url{https://github.com/IoT-Project-252/YoloUNO_ESP32-S3_Project.git}
