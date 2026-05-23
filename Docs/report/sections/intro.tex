@@ -3,42 +3,59 @@
 
 \subsection{Đặt vấn đề}
 
-Trong những năm gần đây, Internet of Things (IoT) trở thành một xu hướng trọng tâm trong chuyển đổi số nhờ khả năng kết nối cảm biến, thiết bị điều khiển và dịch vụ đám mây thành một hệ sinh thái thống nhất. Đối với các hệ thống nhúng thời gian thực, bài toán không chỉ dừng ở việc ``đọc được dữ liệu'' mà còn phải đảm bảo phản hồi nhanh, hoạt động ổn định khi đa nhiệm, và dễ mở rộng khi tích hợp thêm các chức năng thông minh.
+Trong những năm gần đây, Internet of Things (IoT) trở thành một nền tảng quan trọng trong chuyển đổi số nhờ khả năng kết nối thiết bị vật lý, thu thập dữ liệu theo thời gian thực và hỗ trợ ra quyết định tự động dựa trên ngữ cảnh vận hành. Ở nhiều miền ứng dụng như nhà thông minh, giám sát môi trường, cảnh báo an toàn và quản lý năng lượng, giá trị của IoT không chỉ nằm ở khả năng ``kết nối được'' mà còn nằm ở việc hệ thống có vận hành ổn định khi mở rộng quy mô hay không.
 
-Xuất phát từ yêu cầu đó, đề tài \textit{YoloUNO ESP32-S3 IoT Project} được xây dựng để mô phỏng một hệ thống giám sát và điều khiển môi trường theo hướng thực tiễn: đo nhiệt độ/độ ẩm, hiển thị trạng thái cảnh báo tại chỗ, điều khiển thiết bị qua web, và giao tiếp giữa nhiều node thông qua MQTT. Đây là mô hình điển hình của các ứng dụng nhà thông minh, cảnh báo an toàn nội bộ, và giám sát phòng kỹ thuật quy mô nhỏ.
+Đối với hệ thống nhúng thời gian thực, một thách thức điển hình là xử lý đa nhiệm: đọc cảm biến, cập nhật giao diện, điều khiển cơ cấu chấp hành, truyền thông mạng và ghi log cùng lúc. Nếu kiến trúc đồng bộ không tốt, hệ thống dễ gặp trễ phản hồi, xung đột tài nguyên dùng chung (đặc biệt trên bus I2C), hoặc mất ổn định khi bổ sung chức năng mới. Vì vậy, các nguyên tắc của RTOS, semaphore/mutex và thiết kế module hóa là yêu cầu cốt lõi trong phát triển firmware IoT\footnote{FreeRTOS documentation: \url{https://www.freertos.org/Documentation/00-Overview}}.
+
+Xuất phát từ yêu cầu đó, đề tài \textit{YoloUNO ESP32-S3 IoT Project} được xây dựng để mô phỏng một hệ thống giám sát và điều khiển môi trường theo hướng thực tiễn trên nền ESP32-S3\footnote{ESP32-S3 series datasheet (Espressif): \url{https://www.espressif.com/en/support/documents/technical-documents/esp32-s3-datasheet}}: đo nhiệt độ/độ ẩm, hiển thị cảnh báo tại chỗ, điều khiển thiết bị qua web và mở rộng giao tiếp đa node qua MQTT\footnote{MQTT Version 5.0 Standard: \url{https://docs.oasis-open.org/mqtt/mqtt/v5.0/mqtt-v5.0.html}}. Đây là mô hình đại diện cho một chu trình IoT đầy đủ từ sensing, local control, edge processing đến networking/cloud integration.
 
 \subsection{Mục tiêu đề tài}
 
-Mục tiêu tổng quát của đề tài là làm chủ quy trình phát triển một hệ thống IoT hoàn chỉnh trên nền ESP32-S3 với kiến trúc FreeRTOS, đồng thời đáp ứng các task bắt buộc của học phần. Cụ thể:
+Mục tiêu tổng quát của đề tài là làm chủ quy trình phát triển một hệ thống IoT hoàn chỉnh trên nền ESP32-S3 với kiến trúc FreeRTOS, đồng thời đáp ứng các task bắt buộc của học phần. Về mặt kỹ thuật, nhóm theo đuổi hai mục tiêu song song:
+\begin{itemize}
+    \item xây dựng hệ thống chạy ổn định theo hướng \textit{real-time aware}, có kiểm soát truy cập tài nguyên và dễ bảo trì;
+    \item mở rộng hệ thống từ một node đơn thành mô hình nhiều node có khả năng phối hợp qua giao thức chuẩn.
+\end{itemize}
 
+Các mục tiêu cụ thể gồm:
 \begin{itemize}
     \item Thiết kế lại logic xử lý theo hướng đa nhiệm và đồng bộ bằng semaphore/mutex.
     \item Xây dựng cơ chế theo dõi nhiệt độ/độ ẩm theo trạng thái và hiển thị trực quan trên LCD.
     \item Phát triển web server chế độ AP (mở rộng AP+STA) với dashboard điều khiển thiết bị.
-    \item Chuẩn bị nền tảng để tích hợp TinyML và đánh giá độ chính xác trên phần cứng.
-    \item Kết nối hệ thống với nền tảng cloud (CoreIOT) theo mô hình publish/subscribe.
+    \item Chuẩn bị nền tảng để tích hợp TinyML và đánh giá độ chính xác trên phần cứng biên\footnote{TinyML Foundation: \url{https://www.tinyml.org/}}.
+    \item Kết nối hệ thống với nền tảng cloud (CoreIOT) theo mô hình publish/subscribe\footnote{CoreIOT platform: \url{https://app.coreiot.io/}}.
     \item Mở rộng thêm tính năng giao tiếp hai thiết bị qua local MQTT broker (Mosquitto): PIR node phát hiện chuyển động và buzzer node phát cảnh báo.
 \end{itemize}
 
-Về mức độ cải tiến, mã nguồn đã được chỉnh sửa theo hướng module hóa, bổ sung task mới và thay đổi luồng xử lý đáng kể so với baseline ban đầu, đảm bảo đáp ứng yêu cầu khác biệt tối thiểu 30\% của đề bài.
+Về mức độ cải tiến, mã nguồn được chỉnh sửa theo hướng module hóa, bổ sung task mới và thay đổi đáng kể luồng xử lý so với baseline ban đầu. Mức độ thay đổi này đáp ứng yêu cầu khác biệt tối thiểu 30\% theo đề bài.
 
 \subsection{Phạm vi thực hiện}
 
-Đề tài được triển khai trong phạm vi phần cứng và phần mềm như sau:
-
+Đề tài được triển khai theo phạm vi phần cứng, phần mềm và truyền thông như sau:
 \begin{itemize}
     \item \textbf{Phần cứng chính}: board YoloUNO (ESP32-S3), cảm biến DHT20, LCD I2C, NeoPixel RGB, module quạt mini PWM.
-    \item \textbf{Phần cứng mở rộng}: một board ESP32-S3 DevKitC-1 và buzzer 5V (điều khiển qua transistor/MOSFET driver), cảm biến PIR gắn trên node phát hiện chuyển động.
-    \item \textbf{Phần mềm}: PlatformIO, Arduino framework, FreeRTOS, ESPAsyncWebServer, ArduinoJson, PubSubClient.
-    \item \textbf{Mạng}: WiFi nội bộ, web server AP/AP+STA, MQTT broker cục bộ Mosquitto.
+    \item \textbf{Phần cứng mở rộng}: một board ESP32-S3 DevKitC-1, cảm biến PIR và buzzer 5V (điều khiển qua transistor/MOSFET driver).
+    \item \textbf{Phần mềm}: PlatformIO\footnote{PlatformIO documentation: \url{https://docs.platformio.org/}}, Arduino framework, FreeRTOS, ESPAsyncWebServer, ArduinoJson, PubSubClient.
+    \item \textbf{Mạng}: WiFi nội bộ, web server AP/AP+STA, local MQTT broker Mosquitto.
 \end{itemize}
 
-Trong khuôn khổ báo cáo này, nhóm tập trung mô tả chi tiết các phần đã hiện thực và kiểm thử trực tiếp trên phần cứng thật. Những nội dung còn lại (đặc biệt TinyML nâng cao và tối ưu cloud workflow) được thiết kế theo hướng có thể tích hợp tiếp mà không phá vỡ kiến trúc hiện có.
+Trong khuôn khổ báo cáo này, nhóm tập trung mô tả chi tiết các phần đã hiện thực và kiểm thử trực tiếp trên phần cứng thật. Một số nội dung nâng cao (ví dụ tối ưu pipeline TinyML hoặc hardening bảo mật cloud theo mức production) được đặt ở mức định hướng để thuận lợi tích hợp trong các phiên bản tiếp theo mà không phá vỡ kiến trúc lõi.
+
+\subsection{Ý nghĩa thực tiễn của đề tài}
+
+So với các bài thực hành tách rời từng chức năng, đề tài này có ý nghĩa thực tiễn ở chỗ tích hợp được nhiều lớp công nghệ trong cùng một hệ thống nhất quán:
+\begin{itemize}
+    \item lớp cảm biến và xử lý tín hiệu tại biên;
+    \item lớp điều khiển/hiển thị cục bộ theo trạng thái;
+    \item lớp giao diện web phục vụ vận hành;
+    \item lớp truyền thông cloud và liên thiết bị theo chuẩn MQTT.
+\end{itemize}
+
+Việc triển khai chuỗi chức năng trên phần cứng thật giúp nhóm rèn luyện tư duy hệ thống, kỹ năng debug tích hợp và phương pháp phát triển firmware theo hướng có thể mở rộng, tái sử dụng và bảo trì lâu dài.
 
 \subsection{Cấu trúc báo cáo}
 
 Báo cáo được tổ chức theo trình tự từ lý thuyết đến triển khai và đánh giá:
-
 \begin{itemize}
     \item \textbf{Chương 1 -- Giới thiệu}: nêu bối cảnh, mục tiêu, phạm vi và định hướng thực hiện đề tài.
     \item \textbf{Chương 2 -- Cơ sở lý thuyết}: trình bày nền tảng RTOS, ESP32-S3, web, TinyML và MQTT/CoreIOT.
@@ -47,3 +64,5 @@ Báo cáo được tổ chức theo trình tự từ lý thuyết đến triển
     \item \textbf{Chương 5 -- Kết quả thực nghiệm}: tổng hợp kiểm thử, đối chiếu kết quả mong đợi và kết quả thực tế.
     \item \textbf{Chương 6 -- Thảo luận và kết luận}: đánh giá ưu/nhược điểm, bài học rút ra và hướng phát triển tiếp theo.
 \end{itemize}
+
+

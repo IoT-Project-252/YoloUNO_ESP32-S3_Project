@@ -1,4 +1,4 @@
-\newpage
+﻿\newpage
 \section{Hiện thực}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -16,10 +16,10 @@ Nhóm hiện thực Task 1 theo hướng tách rõ chức năng thành hai task 
 
 Hai task này được tạo trong \texttt{setup()} của \texttt{main.cpp}:
 \begin{lstlisting}[language=c, caption=Khởi tạo các task liên quan Task 1 trong main.cpp]
-xTaskCreate(temp_humi,  "Task Read Temperature & Humidity",
-            4096, projectSharedData, 1, NULL);
-xTaskCreate(led_blinky, "Task LED Blinky",
-            2048, projectSharedData, 1, NULL);
+xTaskCreate(temp_humi, "Task Read Temperature & Humidity", 4096, 
+projectSharedData, 1, NULL);
+xTaskCreate(led_blinky, "Task LED Blinky", 4096, 
+projectSharedData, 1, NULL);
 \end{lstlisting}
 
 \subsubsection*{Định nghĩa ngưỡng nhiệt độ và hành vi LED}
@@ -170,8 +170,10 @@ Nhóm hiện thực Task 3 theo hướng tách rõ chức năng thành hai task 
 
 Hai task này được tạo trong \texttt{setup()} của \texttt{main.cpp}:
 \begin{lstlisting}[language=c, caption=Khởi tạo các task liên quan Task 3 trong main.cpp]
-xTaskCreate(temp_humi,  "TempHumi",   4096, projectSharedData, 1, NULL);
-xTaskCreate(displayLCD, "DisplayLCD", 4096, projectSharedData, 1, NULL);
+xTaskCreate(temp_humi, "TempHumi", 4096, 
+projectSharedData, 1, NULL);
+xTaskCreate(displayLCD, "DisplayLCD", 4096, 
+projectSharedData, 1, NULL);
 \end{lstlisting}
 
 \subsubsection*{Tổ chức dữ liệu chia sẻ và loại bỏ global variables}
@@ -312,7 +314,7 @@ Về mặt thiết kế, Task 4 gồm hai task chính:
 \end{itemize}
 
 \begin{lstlisting}[language=c, caption=Khối tạo task Task 4 trong setup (trích main.cpp)]
-// xTaskCreate(actuatorTask,   "Actuators",   4096, projectSharedData, 1, NULL);
+xTaskCreate(actuatorTask,   "Actuators",   4096, projectSharedData, 1, NULL);
 xTaskCreate(webServerTask,  "WebServer",   8192, projectSharedData, 1, NULL);
 \end{lstlisting}
 
@@ -422,137 +424,6 @@ Phần hiện thực Task 4 đáp ứng đầy đủ yêu cầu đề bài:
     \item Hỗ trợ chuyển sang AP+STA để mở rộng các chức năng mạng phía sau.
 \end{itemize}
 
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-\subsection{Task mở rộng - Giao tiếp 2 thiết bị qua Local MQTT Broker}
-
-\subsubsection*{Mục tiêu mở rộng}
-
-Nhóm mở rộng hệ thống theo hướng giao tiếp hai vi điều khiển qua local MQTT broker (Mosquitto):
-\begin{itemize}
-    \item Thiết bị A (YoloUNO ESP32-S3): đọc cảm biến PIR và publish sự kiện chuyển động.
-    \item Thiết bị B (ESP32-S3 DevKitC-1): subscribe sự kiện, kích hoạt buzzer 5V cảnh báo.
-\end{itemize}
-
-Mục tiêu của phần mở rộng là chứng minh khả năng liên động liên thiết bị theo mô hình publish/subscribe trong cùng mạng LAN.
-
-\subsubsection*{Kiến trúc tổng thể và broker cục bộ}
-
-Mosquitto được chạy trên máy tính trong mạng nội bộ, mở cổng 1883. Cả hai ESP32 kết nối broker cùng địa chỉ IP LAN (ví dụ \texttt{192.168.1.5}).
-
-Luồng dữ liệu:
-\begin{enumerate}
-    \item Device A phát hiện chuyển động từ PIR.
-    \item Device A publish JSON lên topic sự kiện.
-    \item Device B subscribe topic này, nhận bản tin và kích hoạt buzzer.
-    \item Device B publish ACK trạng thái buzzer để Device A/log theo dõi.
-\end{enumerate}
-
-\subsubsection*{Thiết kế topic và payload MQTT}
-
-\begin{table}[h!]
-\centering
-\caption{Topic MQTT cho giao tiếp 2 thiết bị}
-\label{tab:mqtt-topics}
-\begin{tabular}{|c|c|c|}
-\hline
-\textbf{Topic} & \textbf{Publisher} & \textbf{Subscriber} \\
-\hline
-\texttt{iot/group1/pir/events} & Device A & Device B \\
-\hline
-\texttt{iot/group1/buzzer/state} & Device B & Device A (log ACK) \\
-\hline
-\end{tabular}
-\end{table}
-
-Payload sự kiện PIR ở Device A:
-\begin{lstlisting}[language=c, caption=JSON publish khi phát hiện chuyển động (trích pir\_mqtt.cpp)]
-doc["device_id"] = MQTT_CLIENT_ID_A;
-doc["event"]     = motionDetected ? "motion_detected" : "motion_cleared";
-doc["motion"]    = motionDetected;
-doc["ts_ms"]     = (unsigned long)millis();
-\end{lstlisting}
-
-\subsubsection*{Device A: Task PIR + MQTT publisher}
-
-Trên project chính, nhóm tạo \texttt{pirMqttTask} với các cơ chế:
-\begin{itemize}
-    \item Chờ STA sẵn sàng (\texttt{staConnected}) trước khi kết nối MQTT.
-    \item Tự reconnect MQTT mỗi 5 giây khi mất kết nối.
-    \item Đọc PIR theo chu kỳ 200ms, phát hiện cạnh lên (LOW $\rightarrow$ HIGH).
-    \item Dùng cooldown để chống spam bản tin liên tiếp.
-\end{itemize}
-
-\begin{lstlisting}[language=c, caption=Phát hiện cạnh lên PIR và kiểm soát cooldown (trích pir\_mqtt.cpp)]
-bool currentPir = digitalRead(PIR_PIN) == HIGH;
-if (currentPir && !lastPirState) {
-    uint32_t now = millis();
-    if (now - lastPublishTime >= PIR_COOLDOWN_MS) {
-        publishMotionEvent(true);
-        lastPublishTime = now;
-    }
-}
-lastPirState = currentPir;
-\end{lstlisting}
-
-\subsubsection*{Device B: MQTT subscriber + buzzer driver}
-
-Trên project \texttt{ESP32-S3-DevKit-C1\_Src}, nhóm chia thành ba task:
-\begin{itemize}
-    \item \texttt{mqttTask}: quản lý kết nối WiFi/MQTT và xử lý callback.
-    \item \texttt{buzzerTask}: bật/tắt buzzer theo cờ trigger, publish ACK.
-    \item \texttt{blinkLedTask}: nháy LED onboard để báo board đang hoạt động.
-\end{itemize}
-
-Chiến lược xử lý event chồng lấp: nếu buzzer đang kêu thì bỏ qua trigger mới để tránh cảnh báo kéo dài vô hạn.
-
-\begin{lstlisting}[language=c, caption=Logic bỏ qua sự kiện mới khi buzzer đang active (trích Device B main.cpp)]
-if (motion && strcmp(event, "motion_detected") == 0) {
-    if (xSemaphoreTake(alarmMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        if (alarmActive) {
-            Serial.println("[Buzzer] Alarm already active. Ignoring new event.");
-        } else {
-            alarmTrigger = true;
-        }
-        xSemaphoreGive(alarmMutex);
-    }
-}
-\end{lstlisting}
-
-\subsubsection*{Kết nối phần cứng của phần mở rộng}
-
-\textbf{PIR (Device A):}
-\begin{itemize}
-    \item Chân tín hiệu PIR nối vào GPIO cấu hình trong \texttt{PIR\_PIN} (mã hiện tại dùng GPIO8).
-    \item Cấu hình \texttt{INPUT\_PULLDOWN} để tránh trạng thái floating.
-\end{itemize}
-
-\textbf{Buzzer 5V (Device B):}
-\begin{itemize}
-    \item Không nối trực tiếp buzzer 5V vào GPIO ESP32.
-    \item Dùng transistor/MOSFET driver, nối mass chung giữa nguồn 5V và ESP32.
-    \item GPIO chỉ đóng vai trò tín hiệu điều khiển transistor.
-\end{itemize}
-
-\subsubsection*{Quy trình kiểm thử end-to-end}
-
-\begin{enumerate}
-    \item Chạy Mosquitto local broker và xác nhận cổng 1883 hoạt động.
-    \item Nạp firmware cho Device A và Device B.
-    \item Mở serial monitor cả hai board để quan sát trạng thái WiFi/MQTT.
-    \item Tạo chuyển động trước PIR.
-    \item Kiểm tra Device A publish event, Device B nhận event và phát còi.
-    \item Kiểm tra bản tin ACK của buzzer được publish ngược lại.
-\end{enumerate}
-
-\subsubsection*{Giá trị của phần mở rộng}
-
-Tính năng mở rộng này giúp hệ thống vượt khỏi mô hình đơn thiết bị, thể hiện năng lực:
-\begin{itemize}
-    \item giao tiếp liên node theo chuẩn MQTT,
-    \item triển khai kiến trúc event-driven trong LAN,
-    \item và thiết kế hệ cảnh báo tách rời cảm biến/chấp hành để dễ mở rộng thành mạng IoT nhiều node.
-\end{itemize}
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \subsection{Task 5 -- Triển khai TinyML và đánh giá độ chính xác}
@@ -853,3 +724,134 @@ Nhãn dự đoán (\texttt{mlLabel}) được ghi vào \texttt{SharedData} qua \
 
 Task 5 đã hoàn thành một pipeline TinyML khép kín và đúng yêu cầu đề bài: có mô tả tập dữ liệu và quy trình gán nhãn; mô hình được triển khai trực tiếp trên vi điều khiển; có đánh giá độ chính xác trên cả PC (float32 và int8) lẫn kịch bản thực; có thảo luận về nguyên nhân kết quả và các giới hạn khi áp dụng thực tế. Cơ chế đồng bộ \texttt{semDataReady} đảm bảo task TinyML hoạt động hiệu quả trong môi trường đa task của FreeRTOS, không gây tải dư thừa lên CPU.
 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\subsection{Task mở rộng - Giao tiếp 2 thiết bị qua Local MQTT Broker}
+
+\subsubsection*{Mục tiêu mở rộng}
+
+Nhóm mở rộng hệ thống theo hướng giao tiếp hai vi điều khiển qua local MQTT broker (Mosquitto):
+\begin{itemize}
+    \item Thiết bị A (YoloUNO ESP32-S3): đọc cảm biến PIR và publish sự kiện chuyển động.
+    \item Thiết bị B (ESP32-S3 DevKitC-1): subscribe sự kiện, kích hoạt buzzer 5V cảnh báo.
+\end{itemize}
+
+Mục tiêu của phần mở rộng là chứng minh khả năng liên động liên thiết bị theo mô hình publish/subscribe trong cùng mạng LAN.
+
+\subsubsection*{Kiến trúc tổng thể và broker cục bộ}
+
+Mosquitto được chạy trên máy tính trong mạng nội bộ, mở cổng 1883. Cả hai ESP32 kết nối broker cùng địa chỉ IP LAN (ví dụ \texttt{192.168.1.5}).
+
+Luồng dữ liệu:
+\begin{enumerate}
+    \item Device A phát hiện chuyển động từ PIR.
+    \item Device A publish JSON lên topic sự kiện.
+    \item Device B subscribe topic này, nhận bản tin và kích hoạt buzzer.
+    \item Device B publish ACK trạng thái buzzer để Device A/log theo dõi.
+\end{enumerate}
+
+\subsubsection*{Thiết kế topic và payload MQTT}
+
+\begin{table}[h!]
+\centering
+\caption{Topic MQTT cho giao tiếp 2 thiết bị}
+\label{tab:mqtt-topics}
+\begin{tabular}{|c|c|c|}
+\hline
+\textbf{Topic} & \textbf{Publisher} & \textbf{Subscriber} \\
+\hline
+\texttt{iot/group1/pir/events} & Device A & Device B \\
+\hline
+\texttt{iot/group1/buzzer/state} & Device B & Device A (log ACK) \\
+\hline
+\end{tabular}
+\end{table}
+
+Payload sự kiện PIR ở Device A:
+\begin{lstlisting}[language=c, caption=JSON publish khi phát hiện chuyển động (trích pir\_mqtt.cpp)]
+doc["device_id"] = MQTT_CLIENT_ID_A;
+doc["event"]     = motionDetected ? "motion_detected" : "motion_cleared";
+doc["motion"]    = motionDetected;
+doc["ts_ms"]     = (unsigned long)millis();
+\end{lstlisting}
+
+\subsubsection*{Device A: Task PIR + MQTT publisher}
+
+Trên project chính, nhóm tạo \texttt{pirMqttTask} với các cơ chế:
+\begin{itemize}
+    \item Chờ STA sẵn sàng (\texttt{staConnected}) trước khi kết nối MQTT.
+    \item Tự reconnect MQTT mỗi 5 giây khi mất kết nối.
+    \item Đọc PIR theo chu kỳ 200ms, phát hiện cạnh lên (LOW $\rightarrow$ HIGH).
+    \item Dùng cooldown để chống spam bản tin liên tiếp.
+\end{itemize}
+
+\begin{lstlisting}[language=c, caption=Phát hiện cạnh lên PIR và kiểm soát cooldown (trích pir\_mqtt.cpp)]
+bool currentPir = digitalRead(PIR_PIN) == HIGH;
+if (currentPir && !lastPirState) {
+    uint32_t now = millis();
+    if (now - lastPublishTime >= PIR_COOLDOWN_MS) {
+        publishMotionEvent(true);
+        lastPublishTime = now;
+    }
+}
+lastPirState = currentPir;
+\end{lstlisting}
+
+\subsubsection*{Device B: MQTT subscriber + buzzer driver}
+
+Trên project \texttt{ESP32-S3-DevKit-C1\_Src}, nhóm chia thành ba task:
+\begin{itemize}
+    \item \texttt{mqttTask}: quản lý kết nối WiFi/MQTT và xử lý callback.
+    \item \texttt{buzzerTask}: bật/tắt buzzer theo cờ trigger, publish ACK.
+    \item \texttt{blinkLedTask}: nháy LED onboard để báo board đang hoạt động.
+\end{itemize}
+
+Chiến lược xử lý event chồng lấp: nếu buzzer đang kêu thì bỏ qua trigger mới để tránh cảnh báo kéo dài vô hạn.
+
+\begin{lstlisting}[language=c, caption=Logic bỏ qua sự kiện mới khi buzzer đang active (trích Device B main.cpp)]
+if (motion && strcmp(event, "motion_detected") == 0) {
+    if (xSemaphoreTake(alarmMutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        if (alarmActive) {
+            Serial.println("[Buzzer] Alarm already active. Ignoring new event.");
+        } else {
+            alarmTrigger = true;
+        }
+        xSemaphoreGive(alarmMutex);
+    }
+}
+\end{lstlisting}
+
+\subsubsection*{Kết nối phần cứng của phần mở rộng}
+
+\textbf{PIR (Device A):}
+\begin{itemize}
+    \item Chân tín hiệu PIR nối vào GPIO cấu hình trong \texttt{PIR\_PIN} (mã hiện tại dùng GPIO8).
+    \item Cấu hình \texttt{INPUT\_PULLDOWN} để tránh trạng thái floating.
+\end{itemize}
+
+\textbf{Buzzer 5V (Device B):}
+\begin{itemize}
+    \item Không nối trực tiếp buzzer 5V vào GPIO ESP32.
+    \item Dùng transistor/MOSFET driver, nối mass chung giữa nguồn 5V và ESP32.
+    \item GPIO chỉ đóng vai trò tín hiệu điều khiển transistor.
+\end{itemize}
+
+\subsubsection*{Quy trình kiểm thử end-to-end}
+
+\begin{enumerate}
+    \item Chạy Mosquitto local broker và xác nhận cổng 1883 hoạt động.
+    \item Nạp firmware cho Device A và Device B.
+    \item Mở serial monitor cả hai board để quan sát trạng thái WiFi/MQTT.
+    \item Tạo chuyển động trước PIR.
+    \item Kiểm tra Device A publish event, Device B nhận event và phát còi.
+    \item Kiểm tra bản tin ACK của buzzer được publish ngược lại.
+\end{enumerate}
+
+\subsubsection*{Giá trị của phần mở rộng}
+
+Tính năng mở rộng này giúp hệ thống vượt khỏi mô hình đơn thiết bị, thể hiện năng lực:
+\begin{itemize}
+    \item giao tiếp liên node theo chuẩn MQTT,
+    \item triển khai kiến trúc event-driven trong LAN,
+    \item và thiết kế hệ cảnh báo tách rời cảm biến/chấp hành để dễ mở rộng thành mạng IoT nhiều node.
+\end{itemize}
